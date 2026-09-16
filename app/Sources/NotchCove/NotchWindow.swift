@@ -10,7 +10,7 @@ public final class NotchPanel: NSPanel {
             defer: false
         )
 
-        // Level .statusBar + 8: above menu bar, but supported by CoreDrag / DragManager
+        // Level .statusBar + 8: above menu bar, within macOS CoreDrag layer
         self.level = .statusBar + 8
         self.collectionBehavior = [
             .canJoinAllSpaces,
@@ -67,22 +67,55 @@ public final class GlobalEventMonitor {
     }
 }
 
-// Custom Hosting View providing native AppKit Drag & Drop
+// Custom Hosting View providing native AppKit Drag & Drop and click handling
 public final class CoveHostingView<Content: View>: NSHostingView<Content> {
     public weak var windowManager: NotchWindowManager?
 
     public required init(rootView: Content) {
         super.init(rootView: rootView)
-        registerForDraggedTypes([.fileURL, .URL])
+        registerForDraggedTypes([
+            .fileURL,
+            .URL,
+            NSPasteboard.PasteboardType("NSFilenamesPboardType")
+        ])
     }
 
     @MainActor required dynamic init?(coder: NSCoder) {
         super.init(coder: coder)
-        registerForDraggedTypes([.fileURL, .URL])
+        registerForDraggedTypes([
+            .fileURL,
+            .URL,
+            NSPasteboard.PasteboardType("NSFilenamesPboardType")
+        ])
     }
 
     public override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         return true
+    }
+
+    // Direct AppKit click handler on the hosting view
+    public override func mouseDown(with event: NSEvent) {
+        let mouseLoc = NSEvent.mouseLocation
+        guard let wm = windowManager else {
+            super.mouseDown(with: event)
+            return
+        }
+
+        if !wm.isExpanded {
+            let pillRect = wm.currentScreenActiveRect().insetBy(dx: -15, dy: -15)
+            if pillRect.contains(mouseLoc) {
+                wm.expand()
+                return
+            }
+        } else {
+            let shelfRect = wm.currentScreenActiveRect().insetBy(dx: -10, dy: -10)
+            if !shelfRect.contains(mouseLoc) {
+                wm.collapse()
+                return
+            }
+        }
+
+        super.mouseDown(with: event)
     }
 
     // Pass through clicks that are outside the active pill/shelf
@@ -102,7 +135,7 @@ public final class CoveHostingView<Content: View>: NSHostingView<Content> {
     // AppKit Dragging Destination
     public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         DispatchQueue.main.async {
-            self.windowManager?.expandFromDrag()
+            self.windowManager?.expand()
         }
         return .copy
     }
@@ -112,8 +145,8 @@ public final class CoveHostingView<Content: View>: NSHostingView<Content> {
     }
 
     public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        let pasteboard = sender.draggingPasteboard
-        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty else {
+        let urls = extractURLs(from: sender.draggingPasteboard)
+        guard !urls.isEmpty else {
             return false
         }
 
@@ -122,10 +155,37 @@ public final class CoveHostingView<Content: View>: NSHostingView<Content> {
                 CoveEngine.shared.stage(url: url)
             }
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-            self.windowManager?.expandFromDrag()
+            self.windowManager?.expand()
         }
         return true
     }
+}
+
+// Robust URL extraction supporting modern NSURL, legacy NSFilenames, and raw paths
+func extractURLs(from pasteboard: NSPasteboard) -> [URL] {
+    var result: [URL] = []
+
+    if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] {
+        result.append(contentsOf: urls)
+    }
+
+    if result.isEmpty, let paths = pasteboard.propertyList(forType: NSPasteboard.PasteboardType("NSFilenamesPboardType")) as? [String] {
+        for path in paths {
+            result.append(URL(fileURLWithPath: path))
+        }
+    }
+
+    if result.isEmpty, let stringList = pasteboard.readObjects(forClasses: [NSString.self], options: nil) as? [String] {
+        for s in stringList {
+            if s.hasPrefix("file://"), let url = URL(string: s) {
+                result.append(url)
+            } else if s.hasPrefix("/") {
+                result.append(URL(fileURLWithPath: s))
+            }
+        }
+    }
+
+    return result
 }
 
 @MainActor
@@ -195,7 +255,17 @@ public final class NotchWindowManager: NSObject, ObservableObject {
             guard let self = self else { return }
             let loc = NSEvent.mouseLocation
             DispatchQueue.main.async {
-                self.handleMouseDown(at: loc)
+                if self.isExpanded {
+                    let activeRect = self.currentScreenActiveRect().insetBy(dx: -10, dy: -10)
+                    if !activeRect.contains(loc) {
+                        self.collapse()
+                    }
+                } else {
+                    let pillRect = self.currentScreenActiveRect().insetBy(dx: -15, dy: -15)
+                    if pillRect.contains(loc) {
+                        self.expand()
+                    }
+                }
             }
         }
 
@@ -204,40 +274,16 @@ public final class NotchWindowManager: NSObject, ObservableObject {
             guard let self = self else { return }
             let loc = NSEvent.mouseLocation
             DispatchQueue.main.async {
-                self.handleMouseDragged(at: loc)
-            }
-        }
-    }
-
-    private func handleMouseDown(at loc: NSPoint) {
-        if isExpanded {
-            let activeRect = currentScreenActiveRect().insetBy(dx: -10, dy: -10)
-            if !activeRect.contains(loc) {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                    isExpanded = false
+                let screen = self.currentMetrics.screenFrame
+                let triggerRect = NSRect(
+                    x: (screen.width - 500) / 2.0 + screen.origin.x,
+                    y: screen.maxY - 140,
+                    width: 500,
+                    height: 140
+                )
+                if triggerRect.contains(loc) && !self.isExpanded {
+                    self.expand()
                 }
-            }
-        } else {
-            let pillRect = currentScreenActiveRect().insetBy(dx: -15, dy: -15)
-            if pillRect.contains(loc) {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                    isExpanded = true
-                }
-            }
-        }
-    }
-
-    private func handleMouseDragged(at loc: NSPoint) {
-        let screen = currentMetrics.screenFrame
-        let triggerRect = NSRect(
-            x: (screen.width - 500) / 2.0 + screen.origin.x,
-            y: screen.maxY - 140,
-            width: 500,
-            height: 140
-        )
-        if triggerRect.contains(loc) && !isExpanded {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                isExpanded = true
             }
         }
     }
@@ -276,17 +322,27 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         return NSRect(x: x, y: y, width: targetWidth, height: targetHeight)
     }
 
-    public func toggleExpanded() {
+    public func expand() {
+        guard !isExpanded else { return }
         withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-            self.isExpanded.toggle()
+            self.isExpanded = true
         }
+        panel?.makeKey()
     }
 
-    public func expandFromDrag() {
-        if !self.isExpanded {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                self.isExpanded = true
-            }
+    public func collapse() {
+        guard isExpanded else { return }
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+            self.isExpanded = false
+        }
+        panel?.resignKey()
+    }
+
+    public func toggleExpanded() {
+        if isExpanded {
+            collapse()
+        } else {
+            expand()
         }
     }
 }

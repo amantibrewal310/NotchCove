@@ -1,12 +1,10 @@
 import SwiftUI
 import AppKit
 import Observation
-import UniformTypeIdentifiers
 
 @Observable
 @MainActor
 public final class ShelfUIState {
-    public var isTargetedForDrop: Bool = false
     public var hoveredItemId: String? = nil
 
     public init() {}
@@ -58,15 +56,13 @@ public struct NotchCoveView: View {
 
                     // Notch black blending
                     RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 17), style: .continuous)
-                        .fill(Color.black.opacity(uiState.isTargetedForDrop ? 0.70 : 0.88))
+                        .fill(Color.black.opacity(0.85))
 
-                    // Border / Drop highlight
+                    // Border / highlight
                     RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 17), style: .continuous)
                         .strokeBorder(
-                            uiState.isTargetedForDrop
-                                ? Color.accentColor.opacity(0.9)
-                                : Color.white.opacity(0.15),
-                            lineWidth: uiState.isTargetedForDrop ? 1.5 : 0.6
+                            Color.white.opacity(0.15),
+                            lineWidth: 0.6
                         )
                 }
             )
@@ -76,48 +72,34 @@ public struct NotchCoveView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .onDrop(
-            of: [UTType.fileURL.identifier, UTType.item.identifier],
-            isTargeted: Binding(
-                get: { uiState.isTargetedForDrop },
-                set: { uiState.isTargetedForDrop = $0 }
-            )
-        ) { providers in
-            handleIncomingDrop(providers: providers)
-        }
-        .animation(.spring(response: 0.36, dampingFraction: 0.75), value: isExpanded)
-        .animation(.easeInOut(duration: 0.2), value: uiState.isTargetedForDrop)
+        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isExpanded)
     }
 
     // MARK: - Idle State
     private var idlePillView: some View {
-        Button(action: {
-            withAnimation(.spring(response: 0.36, dampingFraction: 0.75)) {
-                isExpanded.toggle()
+        HStack(spacing: 6) {
+            if engine.items.isEmpty {
+                Image(systemName: "tray.and.arrow.down.fill")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.white.opacity(0.85))
+                Text("Cove")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.95))
+            } else {
+                Image(systemName: "tray.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.accentColor)
+                Text("\(engine.items.count) \(engine.items.count == 1 ? "file" : "files")")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white)
             }
-        }) {
-            HStack(spacing: 6) {
-                if engine.items.isEmpty {
-                    Image(systemName: "tray.and.arrow.down.fill")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.8))
-                    Text("Cove")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.9))
-                } else {
-                    Image(systemName: "tray.fill")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(.accentColor)
-                    Text("\(engine.items.count) \(engine.items.count == 1 ? "file" : "files")")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.white)
-                }
-            }
-            .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            NotchWindowManager.shared.toggleExpanded()
+        }
     }
 
     // MARK: - Expanded Shelf View
@@ -144,22 +126,18 @@ public struct NotchCoveView: View {
                 if !engine.items.isEmpty {
                     Button(action: {
                         engine.clearAll()
-                        withAnimation {
-                            isExpanded = false
-                        }
+                        NotchWindowManager.shared.collapse()
                     }) {
                         Text("Clear All")
                             .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.white.opacity(0.6))
+                            .foregroundColor(.white.opacity(0.7))
                     }
                     .buttonStyle(.plain)
                     .padding(.trailing, 6)
                 }
 
                 Button(action: {
-                    withAnimation(.spring(response: 0.36, dampingFraction: 0.75)) {
-                        isExpanded = false
-                    }
+                    NotchWindowManager.shared.collapse()
                 }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 14))
@@ -192,9 +170,7 @@ public struct NotchCoveView: View {
                                 onRemove: {
                                     engine.remove(id: item.id)
                                     if engine.items.isEmpty {
-                                        withAnimation {
-                                            isExpanded = false
-                                        }
+                                        NotchWindowManager.shared.collapse()
                                     }
                                 }
                             )
@@ -208,38 +184,6 @@ public struct NotchCoveView: View {
                 }
             }
         }
-    }
-
-    // MARK: - Drop Handling
-    private func handleIncomingDrop(providers: [NSItemProvider]) -> Bool {
-        var handled = false
-        for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                    if let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
-                        DispatchQueue.main.async {
-                            engine.stage(url: url)
-                            withAnimation(.spring(response: 0.36, dampingFraction: 0.75)) {
-                                isExpanded = true
-                            }
-                        }
-                    } else if let url = item as? URL {
-                        DispatchQueue.main.async {
-                            engine.stage(url: url)
-                            withAnimation(.spring(response: 0.36, dampingFraction: 0.75)) {
-                                isExpanded = true
-                            }
-                        }
-                    }
-                }
-                handled = true
-            }
-        }
-
-        if handled {
-            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-        }
-        return handled
     }
 }
 

@@ -10,8 +10,8 @@ public final class NotchPanel: NSPanel {
             defer: false
         )
 
-        // Float above everything (102 = CGWindowLevelForKey(.overlayWindow))
-        self.level = NSWindow.Level(Int(CGWindowLevelForKey(.overlayWindow)))
+        // Level .statusBar + 8: above menu bar, but supported by CoreDrag / DragManager
+        self.level = .statusBar + 8
         self.collectionBehavior = [
             .canJoinAllSpaces,
             .fullScreenAuxiliary,
@@ -32,11 +32,42 @@ public final class NotchPanel: NSPanel {
     }
 
     public override var canBecomeMain: Bool {
-        return false
+        return true
     }
 }
 
-// Custom Hosting View that provides hit-testing pass-through and native drag-and-drop
+// Global & Local Event Monitor to detect clicks and file-drag gestures across macOS
+public final class GlobalEventMonitor {
+    private var globalMonitors: [Any] = []
+    private var localMonitors: [Any] = []
+
+    public init() {}
+
+    public func addMonitor(mask: NSEvent.EventTypeMask, handler: @escaping (NSEvent) -> Void) {
+        if let g = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: handler) {
+            globalMonitors.append(g)
+        }
+        if let l = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { event in
+            handler(event)
+            return event
+        }) {
+            localMonitors.append(l)
+        }
+    }
+
+    public func stop() {
+        for g in globalMonitors { NSEvent.removeMonitor(g) }
+        globalMonitors.removeAll()
+        for l in localMonitors { NSEvent.removeMonitor(l) }
+        localMonitors.removeAll()
+    }
+
+    deinit {
+        stop()
+    }
+}
+
+// Custom Hosting View providing native AppKit Drag & Drop
 public final class CoveHostingView<Content: View>: NSHostingView<Content> {
     public weak var windowManager: NotchWindowManager?
 
@@ -54,49 +85,30 @@ public final class CoveHostingView<Content: View>: NSHostingView<Content> {
         return true
     }
 
-    // Precise hit-testing:
-    // Because NSHostingView is flipped, y = 0 is the TOP of the view.
+    // Pass through clicks that are outside the active pill/shelf
     public override func hitTest(_ point: NSPoint) -> NSView? {
         guard let wm = windowManager else { return super.hitTest(point) }
 
-        let activeRect = wm.currentActiveRect(in: self.bounds)
-        let hitArea = activeRect.insetBy(dx: -15, dy: -15)
+        let mouseLoc = NSEvent.mouseLocation
+        let activeScreenRect = wm.currentScreenActiveRect().insetBy(dx: -10, dy: -10)
 
-        if hitArea.contains(point) {
+        if activeScreenRect.contains(mouseLoc) {
             return super.hitTest(point)
         } else {
-            // Clicked outside while expanded -> smooth collapse
-            if wm.isExpanded {
-                DispatchQueue.main.async {
-                    withAnimation(.spring(response: 0.36, dampingFraction: 0.75)) {
-                        wm.isExpanded = false
-                    }
-                }
-            }
             return nil
         }
     }
 
-    // Native Drag and Drop: Flung files towards top-center expand the Cove effortlessly
+    // AppKit Dragging Destination
     public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        let point = convert(sender.draggingLocation, from: nil)
-        guard let wm = windowManager else { return [] }
-
-        if point.y <= 160 && point.x >= 30 && point.x <= (self.bounds.width - 30) {
-            DispatchQueue.main.async {
-                wm.expandFromDrag()
-            }
-            return .copy
+        DispatchQueue.main.async {
+            self.windowManager?.expandFromDrag()
         }
-        return []
+        return .copy
     }
 
     public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        let point = convert(sender.draggingLocation, from: nil)
-        if point.y <= 160 && point.x >= 30 && point.x <= (self.bounds.width - 30) {
-            return .copy
-        }
-        return []
+        return .copy
     }
 
     public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
@@ -122,8 +134,9 @@ public final class NotchWindowManager: NSObject, ObservableObject {
 
     private var panel: NotchPanel?
     private var hostingView: CoveHostingView<NotchCoveView>?
+    private let eventMonitor = GlobalEventMonitor()
 
-    // Canvas size for overlay: remains permanently fixed at top center so it never displaces!
+    // Fixed canvas anchored to top center
     private let canvasWidth: CGFloat = 640
     private let canvasHeight: CGFloat = 200
 
@@ -134,7 +147,6 @@ public final class NotchWindowManager: NSObject, ObservableObject {
     public func setup() {
         self.currentMetrics = NotchMetrics.current()
 
-        // Fixed frame anchored to the very top center of the screen
         let canvasX = (currentMetrics.screenFrame.width - canvasWidth) / 2.0 + currentMetrics.screenFrame.origin.x
         let canvasY = currentMetrics.screenFrame.maxY - canvasHeight
 
@@ -165,6 +177,9 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         panel.contentView = hostingView
         panel.orderFrontRegardless()
 
+        // Setup global mouse monitoring for click & drag detection
+        setupEventMonitors()
+
         // Handle multi-display changes
         NotificationCenter.default.addObserver(
             self,
@@ -172,6 +187,59 @@ public final class NotchWindowManager: NSObject, ObservableObject {
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
+    }
+
+    private func setupEventMonitors() {
+        // Monitor Left Mouse Down across the entire OS
+        eventMonitor.addMonitor(mask: .leftMouseDown) { [weak self] _ in
+            guard let self = self else { return }
+            let loc = NSEvent.mouseLocation
+            DispatchQueue.main.async {
+                self.handleMouseDown(at: loc)
+            }
+        }
+
+        // Monitor Left Mouse Drag across the entire OS (detects files being dragged towards notch)
+        eventMonitor.addMonitor(mask: .leftMouseDragged) { [weak self] _ in
+            guard let self = self else { return }
+            let loc = NSEvent.mouseLocation
+            DispatchQueue.main.async {
+                self.handleMouseDragged(at: loc)
+            }
+        }
+    }
+
+    private func handleMouseDown(at loc: NSPoint) {
+        if isExpanded {
+            let activeRect = currentScreenActiveRect().insetBy(dx: -10, dy: -10)
+            if !activeRect.contains(loc) {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                    isExpanded = false
+                }
+            }
+        } else {
+            let pillRect = currentScreenActiveRect().insetBy(dx: -15, dy: -15)
+            if pillRect.contains(loc) {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                    isExpanded = true
+                }
+            }
+        }
+    }
+
+    private func handleMouseDragged(at loc: NSPoint) {
+        let screen = currentMetrics.screenFrame
+        let triggerRect = NSRect(
+            x: (screen.width - 500) / 2.0 + screen.origin.x,
+            y: screen.maxY - 140,
+            width: 500,
+            height: 140
+        )
+        if triggerRect.contains(loc) && !isExpanded {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                isExpanded = true
+            }
+        }
     }
 
     @objc private func screenParametersChanged() {
@@ -187,8 +255,9 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         )
     }
 
-    // Active rect in flipped view coordinates (y = 0 is the top edge!)
-    public func currentActiveRect(in viewBounds: NSRect) -> NSRect {
+    // Active rect in global screen coordinates (for NSEvent.mouseLocation comparison)
+    public func currentScreenActiveRect() -> NSRect {
+        let screen = currentMetrics.screenFrame
         let targetWidth: CGFloat
         let targetHeight: CGFloat
 
@@ -201,21 +270,21 @@ public final class NotchWindowManager: NSObject, ObservableObject {
             targetHeight = currentMetrics.height
         }
 
-        let x = (viewBounds.width - targetWidth) / 2.0
-        let y: CGFloat = 0.0 // Top of flipped view!
+        let x = (screen.width - targetWidth) / 2.0 + screen.origin.x
+        let y = screen.maxY - targetHeight
 
         return NSRect(x: x, y: y, width: targetWidth, height: targetHeight)
     }
 
     public func toggleExpanded() {
-        withAnimation(.spring(response: 0.36, dampingFraction: 0.75)) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
             self.isExpanded.toggle()
         }
     }
 
     public func expandFromDrag() {
         if !self.isExpanded {
-            withAnimation(.spring(response: 0.36, dampingFraction: 0.75)) {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                 self.isExpanded = true
             }
         }

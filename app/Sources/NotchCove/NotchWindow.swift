@@ -10,8 +10,8 @@ public final class NotchPanel: NSPanel {
             defer: false
         )
 
-        // Float above everything (including the menu bar)
-        self.level = NSWindow.Level(Int(CGWindowLevelKey.overlayWindow.rawValue))
+        // Float above everything (102 = CGWindowLevelForKey(.overlayWindow))
+        self.level = NSWindow.Level(Int(CGWindowLevelForKey(.overlayWindow)))
         self.collectionBehavior = [
             .canJoinAllSpaces,
             .fullScreenAuxiliary,
@@ -28,7 +28,7 @@ public final class NotchPanel: NSPanel {
     }
 
     public override var canBecomeKey: Bool {
-        return false
+        return true
     }
 
     public override var canBecomeMain: Bool {
@@ -54,14 +54,15 @@ public final class CoveHostingView<Content: View>: NSHostingView<Content> {
         return true
     }
 
-    // Precise hit-testing: only intercept mouse clicks inside the active pill/shelf.
-    // Clicks in empty transparent areas pass straight through to whatever app is underneath!
+    // Precise hit-testing:
+    // Because NSHostingView is flipped, y = 0 is the TOP of the view.
     public override func hitTest(_ point: NSPoint) -> NSView? {
         guard let wm = windowManager else { return super.hitTest(point) }
 
         let activeRect = wm.currentActiveRect(in: self.bounds)
+        let hitArea = activeRect.insetBy(dx: -15, dy: -15)
 
-        if activeRect.contains(point) {
+        if hitArea.contains(point) {
             return super.hitTest(point)
         } else {
             // Clicked outside while expanded -> smooth collapse
@@ -76,13 +77,12 @@ public final class CoveHostingView<Content: View>: NSHostingView<Content> {
         }
     }
 
-    // Native Drag and Drop Handling
+    // Native Drag and Drop: Flung files towards top-center expand the Cove effortlessly
     public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         let point = convert(sender.draggingLocation, from: nil)
         guard let wm = windowManager else { return [] }
 
-        let activeRect = wm.currentActiveRect(in: self.bounds)
-        if activeRect.insetBy(dx: -30, dy: -30).contains(point) {
+        if point.y <= 160 && point.x >= 30 && point.x <= (self.bounds.width - 30) {
             DispatchQueue.main.async {
                 wm.expandFromDrag()
             }
@@ -93,10 +93,7 @@ public final class CoveHostingView<Content: View>: NSHostingView<Content> {
 
     public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
         let point = convert(sender.draggingLocation, from: nil)
-        guard let wm = windowManager else { return [] }
-
-        let activeRect = wm.currentActiveRect(in: self.bounds)
-        if activeRect.insetBy(dx: -30, dy: -30).contains(point) {
+        if point.y <= 160 && point.x >= 30 && point.x <= (self.bounds.width - 30) {
             return .copy
         }
         return []
@@ -190,6 +187,7 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         )
     }
 
+    // Active rect in flipped view coordinates (y = 0 is the top edge!)
     public func currentActiveRect(in viewBounds: NSRect) -> NSRect {
         let targetWidth: CGFloat
         let targetHeight: CGFloat
@@ -204,7 +202,7 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         }
 
         let x = (viewBounds.width - targetWidth) / 2.0
-        let y = viewBounds.height - targetHeight
+        let y: CGFloat = 0.0 // Top of flipped view!
 
         return NSRect(x: x, y: y, width: targetWidth, height: targetHeight)
     }

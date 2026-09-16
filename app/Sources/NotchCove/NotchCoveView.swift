@@ -34,42 +34,48 @@ public struct NotchCoveView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            if isExpanded {
-                expandedShelfView
-                    .transition(.asymmetric(
-                        insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .top)),
-                        removal: .opacity
-                    ))
-            } else {
-                idlePillView
-            }
-        }
-        .frame(
-            width: isExpanded ? max(460, CGFloat(engine.items.count * 90 + 160)) : metrics.width,
-            height: isExpanded ? 145 : metrics.height
-        )
-        .background(
+            // The Pill / Shelf Card: firmly anchored at the top
             ZStack {
-                // Frosted background
-                RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 16), style: .continuous)
-                    .fill(.ultraThinMaterial)
-
-                // Deep dark overlay for notch seamless blending
-                RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 16), style: .continuous)
-                    .fill(Color.black.opacity(uiState.isTargetedForDrop ? 0.70 : 0.85))
-
-                // Subtle border glow when dragging over
-                RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 16), style: .continuous)
-                    .strokeBorder(
-                        uiState.isTargetedForDrop
-                            ? Color.accentColor.opacity(0.9)
-                            : Color.white.opacity(0.15),
-                        lineWidth: uiState.isTargetedForDrop ? 1.5 : 0.6
-                    )
+                if isExpanded {
+                    expandedShelfView
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .top)),
+                            removal: .opacity
+                        ))
+                } else {
+                    idlePillView
+                }
             }
-        )
-        .clipShape(RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 16), style: .continuous))
-        .shadow(color: Color.black.opacity(isExpanded ? 0.40 : 0.15), radius: isExpanded ? 18 : 6, x: 0, y: isExpanded ? 8 : 2)
+            .frame(
+                width: isExpanded ? max(460, CGFloat(engine.items.count * 90 + 160)) : metrics.width,
+                height: isExpanded ? 145 : metrics.height
+            )
+            .background(
+                ZStack {
+                    // Native frosted glass
+                    RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 17), style: .continuous)
+                        .fill(.ultraThinMaterial)
+
+                    // Notch black blending
+                    RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 17), style: .continuous)
+                        .fill(Color.black.opacity(uiState.isTargetedForDrop ? 0.70 : 0.88))
+
+                    // Border / Drop highlight
+                    RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 17), style: .continuous)
+                        .strokeBorder(
+                            uiState.isTargetedForDrop
+                                ? Color.accentColor.opacity(0.9)
+                                : Color.white.opacity(0.15),
+                            lineWidth: uiState.isTargetedForDrop ? 1.5 : 0.6
+                        )
+                }
+            )
+            .clipShape(RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 17), style: .continuous))
+            .shadow(color: Color.black.opacity(isExpanded ? 0.40 : 0.15), radius: isExpanded ? 18 : 6, x: 0, y: isExpanded ? 8 : 2)
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onDrop(
             of: [UTType.fileURL.identifier, UTType.item.identifier],
             isTargeted: Binding(

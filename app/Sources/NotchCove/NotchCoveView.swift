@@ -1,45 +1,32 @@
 import SwiftUI
 import AppKit
-import Observation
-
-@Observable
-@MainActor
-public final class ShelfUIState {
-    public var hoveredItemId: String? = nil
-
-    public init() {}
-}
 
 @MainActor
 public struct NotchCoveView: View {
     @ObservedObject var engine = CoveEngine.shared
-    @Binding var isExpanded: Bool
-    var uiState: ShelfUIState
-
     let metrics: NotchMetrics
+    let isExpanded: Bool
 
-    public init(metrics: NotchMetrics, isExpanded: Binding<Bool>, uiState: ShelfUIState) {
+    public init(metrics: NotchMetrics, isExpanded: Bool) {
         self.metrics = metrics
-        self._isExpanded = isExpanded
-        self.uiState = uiState
+        self.isExpanded = isExpanded
     }
 
-    public init(metrics: NotchMetrics, isExpanded: Binding<Bool>) {
-        self.metrics = metrics
-        self._isExpanded = isExpanded
-        self.uiState = ShelfUIState()
+    private var cornerRadius: CGFloat {
+        isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 17)
     }
 
     public var body: some View {
         VStack(spacing: 0) {
-            // The Pill / Shelf Card: firmly anchored at the top
+            // Top inset: push content below menu bar on non-notch screens
+            if metrics.topInset > 0 {
+                Spacer().frame(height: isExpanded ? max(metrics.topInset - 10, 0) : metrics.topInset)
+            }
+
+            // The Pill / Shelf Card
             ZStack {
                 if isExpanded {
                     expandedShelfView
-                        .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .top)),
-                            removal: .opacity
-                        ))
                 } else {
                     idlePillView
                 }
@@ -50,24 +37,17 @@ public struct NotchCoveView: View {
             )
             .background(
                 ZStack {
-                    // Native frosted glass
-                    RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 17), style: .continuous)
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                         .fill(.ultraThinMaterial)
-
-                    // Notch black blending
-                    RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 17), style: .continuous)
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                         .fill(Color.black.opacity(0.85))
-
-                    // Border / highlight
-                    RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 17), style: .continuous)
-                        .strokeBorder(
-                            Color.white.opacity(0.15),
-                            lineWidth: 0.6
-                        )
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.15), lineWidth: 0.6)
                 }
             )
-            .clipShape(RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 17), style: .continuous))
-            .shadow(color: Color.black.opacity(isExpanded ? 0.40 : 0.15), radius: isExpanded ? 18 : 6, x: 0, y: isExpanded ? 8 : 2)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .shadow(color: Color.black.opacity(isExpanded ? 0.40 : 0.15),
+                    radius: isExpanded ? 18 : 6, x: 0, y: isExpanded ? 8 : 2)
 
             Spacer()
         }
@@ -75,7 +55,7 @@ public struct NotchCoveView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isExpanded)
     }
 
-    // MARK: - Idle State
+    // MARK: - Idle Pill
     private var idlePillView: some View {
         HStack(spacing: 6) {
             if engine.items.isEmpty {
@@ -99,10 +79,10 @@ public struct NotchCoveView: View {
         .contentShape(Rectangle())
     }
 
-    // MARK: - Expanded Shelf View
+    // MARK: - Expanded Shelf
     private var expandedShelfView: some View {
         VStack(spacing: 10) {
-            // Header Bar
+            // Header
             HStack {
                 HStack(spacing: 6) {
                     Image(systemName: "tray.2.fill")
@@ -145,7 +125,7 @@ public struct NotchCoveView: View {
             .padding(.horizontal, 16)
             .padding(.top, 12)
 
-            // Content Area: Empty State or File Shelf
+            // Content
             if engine.items.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "arrow.down.doc.fill")
@@ -161,19 +141,12 @@ public struct NotchCoveView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 14) {
                         ForEach(engine.items) { item in
-                            StagedFileCard(
-                                item: item,
-                                isHovered: uiState.hoveredItemId == item.id,
-                                onRemove: {
-                                    engine.remove(id: item.id)
-                                    if engine.items.isEmpty {
-                                        NotchWindowManager.shared.collapse()
-                                    }
+                            StagedFileCard(item: item, onRemove: {
+                                engine.remove(id: item.id)
+                                if engine.items.isEmpty {
+                                    NotchWindowManager.shared.collapse()
                                 }
-                            )
-                            .onHover { hovering in
-                                uiState.hoveredItemId = hovering ? item.id : nil
-                            }
+                            })
                         }
                     }
                     .padding(.horizontal, 16)
@@ -184,52 +157,28 @@ public struct NotchCoveView: View {
     }
 }
 
-// MARK: - Staged File Card Component
+// MARK: - File Card
 struct StagedFileCard: View {
     let item: StagedItem
-    let isHovered: Bool
     let onRemove: () -> Void
 
     var body: some View {
         VStack(spacing: 4) {
-            ZStack(alignment: .topTrailing) {
-                // File Icon with Native AppKit Icon
-                FileIconView(path: item.originalPath)
-                    .frame(width: 44, height: 44)
-                    .padding(6)
-                    .background(Color.white.opacity(isHovered ? 0.14 : 0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            FileIconView(path: item.originalPath, onDragEnd: onRemove)
+                .frame(width: 44, height: 44)
+                .padding(6)
+                .background(Color.white.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-                // Remove Button on hover
-                if isHovered {
-                    Button(action: onRemove) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(.white)
-                            .padding(3)
-                            .background(Color.red.opacity(0.85))
-                            .clipShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .offset(x: 4, y: -4)
-                }
-            }
-
-            // Filename
             Text(item.filename)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(.white.opacity(0.9))
                 .lineLimit(1)
                 .frame(width: 68)
 
-            // File Size
             Text(item.formattedSize)
                 .font(.system(size: 8))
                 .foregroundColor(.white.opacity(0.5))
-        }
-        // Support Dragging Out from Cove to Finder/Slack/Mail!
-        .onDrag {
-            NSItemProvider(contentsOf: URL(fileURLWithPath: item.originalPath)) ?? NSItemProvider()
         }
         .contextMenu {
             Button("Reveal in Finder") {
@@ -243,9 +192,7 @@ struct StagedFileCard: View {
                 NSPasteboard.general.setString(item.originalPath, forType: .string)
             }
             Divider()
-            Button("Remove from Cove", role: .destructive) {
-                onRemove()
-            }
+            Button("Remove from Cove", role: .destructive) { onRemove() }
         }
     }
 }
@@ -253,16 +200,61 @@ struct StagedFileCard: View {
 // MARK: - Native File Icon View
 struct FileIconView: NSViewRepresentable {
     let path: String
+    let onDragEnd: () -> Void
 
-    func makeNSView(context: Context) -> NSImageView {
-        let imageView = NSImageView()
-        imageView.imageScaling = .scaleProportionallyUpOrDown
-        let icon = NSWorkspace.shared.icon(forFile: path)
-        imageView.image = icon
-        return imageView
+    class DraggableImageView: NSImageView, NSDraggingSource {
+        var fileURL: URL?
+        var onDragEnd: (() -> Void)?
+        private var isDragging = false
+        private var mouseDownEvent: NSEvent?
+
+        override func mouseDown(with event: NSEvent) {
+            mouseDownEvent = event
+            isDragging = false
+            super.mouseDown(with: event)
+        }
+        
+        override func mouseDragged(with event: NSEvent) {
+            guard !isDragging, let url = fileURL, let downEvent = mouseDownEvent else {
+                super.mouseDragged(with: event)
+                return
+            }
+            
+            // Start drag
+            isDragging = true
+            let item = NSDraggingItem(pasteboardWriter: url as NSURL)
+            let draggingFrame = NSRect(x: 0, y: 0, width: self.bounds.width, height: self.bounds.height)
+            item.setDraggingFrame(draggingFrame, contents: self.image)
+            
+            self.beginDraggingSession(with: [item], event: downEvent, source: self)
+        }
+        
+        func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+            return [.copy, .move, .link, .generic]
+        }
+        
+        func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+            isDragging = false
+            if operation != [] {
+                DispatchQueue.main.async {
+                    self.onDragEnd?()
+                }
+            }
+        }
     }
 
-    func updateNSView(_ nsView: NSImageView, context: Context) {
+    func makeNSView(context: Context) -> DraggableImageView {
+        let iv = DraggableImageView()
+        iv.imageScaling = .scaleProportionallyUpOrDown
+        iv.fileURL = URL(fileURLWithPath: path)
+        iv.onDragEnd = onDragEnd
+        iv.image = NSWorkspace.shared.icon(forFile: path)
+        return iv
+    }
+
+    func updateNSView(_ nsView: DraggableImageView, context: Context) {
+        nsView.fileURL = URL(fileURLWithPath: path)
+        nsView.onDragEnd = onDragEnd
         nsView.image = NSWorkspace.shared.icon(forFile: path)
     }
 }

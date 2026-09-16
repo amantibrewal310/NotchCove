@@ -7,6 +7,8 @@ public struct NotchMetrics {
     public let height: CGFloat
     public let hasPhysicalNotch: Bool
     public let screenFrame: CGRect
+    /// Distance from top of canvas window to top of the pill (used for SwiftUI layout)
+    public let topInset: CGFloat
 
     public var centerPoint: CGPoint {
         CGPoint(x: x + width / 2.0, y: y + height / 2.0)
@@ -20,7 +22,8 @@ public struct NotchMetrics {
                 width: 200,
                 height: 34,
                 hasPhysicalNotch: false,
-                screenFrame: .zero
+                screenFrame: .zero,
+                topInset: 0
             )
         }
 
@@ -51,14 +54,26 @@ public struct NotchMetrics {
                 width: notchWidth,
                 height: notchHeight,
                 hasPhysicalNotch: true,
-                screenFrame: frame
+                screenFrame: frame,
+                topInset: 0
             )
         } else {
-            // External screen or non-notched MacBook: floating pill at top
+            // External screen or non-notched MacBook: floating pill BELOW the menu bar
             let pillWidth: CGFloat = 190
             let pillHeight: CGFloat = 32
+
+            // Menu bar height = distance from screen top to visible area top
+            let visibleFrame = screen.visibleFrame
+            let menuBarHeight = frame.maxY - visibleFrame.maxY  // typically ~30pt
+
+            // Position pill just below the menu bar
             let pillX = (frame.width - pillWidth) / 2.0 + frame.origin.x
-            let pillY = frame.maxY - pillHeight
+            let pillY = visibleFrame.maxY - pillHeight  // bottom of pill at (menuBarBottom - pillHeight)
+
+            // topInset = how far down from the canvas window's top edge to the pill's top edge
+            // Canvas window top is at frame.maxY, pill top is at visibleFrame.maxY
+            // So topInset = frame.maxY - visibleFrame.maxY = menuBarHeight
+            let topInset = menuBarHeight
 
             return NotchMetrics(
                 x: pillX,
@@ -66,7 +81,8 @@ public struct NotchMetrics {
                 width: pillWidth,
                 height: pillHeight,
                 hasPhysicalNotch: false,
-                screenFrame: frame
+                screenFrame: frame,
+                topInset: topInset
             )
         }
     }

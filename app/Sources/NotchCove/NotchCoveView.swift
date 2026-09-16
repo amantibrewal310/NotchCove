@@ -37,7 +37,7 @@ public struct NotchCoveView: View {
             if isExpanded {
                 expandedShelfView
                     .transition(.asymmetric(
-                        insertion: .opacity.combined(with: .scale(scale: 0.95, anchor: .top)),
+                        insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .top)),
                         removal: .opacity
                     ))
             } else {
@@ -45,31 +45,31 @@ public struct NotchCoveView: View {
             }
         }
         .frame(
-            width: isExpanded ? max(440, CGFloat(engine.items.count * 90 + 160)) : metrics.width,
-            height: isExpanded ? 140 : metrics.height
+            width: isExpanded ? max(460, CGFloat(engine.items.count * 90 + 160)) : metrics.width,
+            height: isExpanded ? 145 : metrics.height
         )
         .background(
             ZStack {
                 // Frosted background
-                RoundedRectangle(cornerRadius: isExpanded ? 24 : (metrics.hasPhysicalNotch ? 10 : 16), style: .continuous)
+                RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 16), style: .continuous)
                     .fill(.ultraThinMaterial)
 
                 // Deep dark overlay for notch seamless blending
-                RoundedRectangle(cornerRadius: isExpanded ? 24 : (metrics.hasPhysicalNotch ? 10 : 16), style: .continuous)
-                    .fill(Color.black.opacity(uiState.isTargetedForDrop ? 0.75 : 0.88))
+                RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 16), style: .continuous)
+                    .fill(Color.black.opacity(uiState.isTargetedForDrop ? 0.70 : 0.85))
 
                 // Subtle border glow when dragging over
-                RoundedRectangle(cornerRadius: isExpanded ? 24 : (metrics.hasPhysicalNotch ? 10 : 16), style: .continuous)
+                RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 16), style: .continuous)
                     .strokeBorder(
                         uiState.isTargetedForDrop
-                            ? Color.accentColor.opacity(0.8)
-                            : Color.white.opacity(0.12),
-                        lineWidth: uiState.isTargetedForDrop ? 1.5 : 0.5
+                            ? Color.accentColor.opacity(0.9)
+                            : Color.white.opacity(0.15),
+                        lineWidth: uiState.isTargetedForDrop ? 1.5 : 0.6
                     )
             }
         )
-        .clipShape(RoundedRectangle(cornerRadius: isExpanded ? 24 : (metrics.hasPhysicalNotch ? 10 : 16), style: .continuous))
-        .shadow(color: Color.black.opacity(isExpanded ? 0.35 : 0.0), radius: 16, x: 0, y: 8)
+        .clipShape(RoundedRectangle(cornerRadius: isExpanded ? 20 : (metrics.hasPhysicalNotch ? 8 : 16), style: .continuous))
+        .shadow(color: Color.black.opacity(isExpanded ? 0.40 : 0.15), radius: isExpanded ? 18 : 6, x: 0, y: isExpanded ? 8 : 2)
         .onDrop(
             of: [UTType.fileURL.identifier, UTType.item.identifier],
             isTargeted: Binding(
@@ -85,34 +85,33 @@ public struct NotchCoveView: View {
 
     // MARK: - Idle State
     private var idlePillView: some View {
-        HStack(spacing: 8) {
-            if engine.items.isEmpty {
-                if !metrics.hasPhysicalNotch {
-                    // Friendly pill indicator on external monitor
-                    Image(systemName: "tray.and.arrow.down")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.7))
-                    Text("Cove")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.8))
-                }
-            } else {
-                // Staged files count pill
-                Image(systemName: "tray.fill")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(.accentColor)
-                Text("\(engine.items.count)")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .onTapGesture {
+        Button(action: {
             withAnimation(.spring(response: 0.36, dampingFraction: 0.75)) {
                 isExpanded.toggle()
             }
+        }) {
+            HStack(spacing: 6) {
+                if engine.items.isEmpty {
+                    Image(systemName: "tray.and.arrow.down.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white.opacity(0.8))
+                    Text("Cove")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.9))
+                } else {
+                    Image(systemName: "tray.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.accentColor)
+                    Text("\(engine.items.count) \(engine.items.count == 1 ? "file" : "files")")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Expanded Shelf View
@@ -148,7 +147,7 @@ public struct NotchCoveView: View {
                             .foregroundColor(.white.opacity(0.6))
                     }
                     .buttonStyle(.plain)
-                    .padding(.trailing, 4)
+                    .padding(.trailing, 6)
                 }
 
                 Button(action: {
@@ -157,26 +156,26 @@ public struct NotchCoveView: View {
                     }
                 }) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.5))
+                        .font(.system(size: 14))
+                        .foregroundColor(.white.opacity(0.6))
                 }
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 16)
-            .padding(.top, 10)
+            .padding(.top, 12)
 
             // Content Area: Empty State or File Shelf
             if engine.items.isEmpty {
                 VStack(spacing: 6) {
-                    Image(systemName: "arrow.down.doc")
+                    Image(systemName: "arrow.down.doc.fill")
                         .font(.system(size: 24))
-                        .foregroundColor(.white.opacity(0.35))
+                        .foregroundColor(.white.opacity(0.4))
                     Text("Drop files or folders here to stash")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(.white.opacity(0.6))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.bottom, 8)
+                .padding(.bottom, 12)
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 14) {
@@ -199,7 +198,7 @@ public struct NotchCoveView: View {
                         }
                     }
                     .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
+                    .padding(.bottom, 14)
                 }
             }
         }
@@ -251,7 +250,7 @@ struct StagedFileCard: View {
                 FileIconView(path: item.originalPath)
                     .frame(width: 44, height: 44)
                     .padding(6)
-                    .background(Color.white.opacity(isHovered ? 0.12 : 0.06))
+                    .background(Color.white.opacity(isHovered ? 0.14 : 0.08))
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                 // Remove Button on hover

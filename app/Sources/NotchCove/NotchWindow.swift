@@ -10,7 +10,8 @@ public final class NotchPanel: NSPanel {
             defer: false
         )
 
-        self.level = .statusBar
+        // Float above everything (including the menu bar on external monitors)
+        self.level = NSWindow.Level(Int(CGWindowLevelKey.overlayWindow.rawValue))
         self.collectionBehavior = [
             .canJoinAllSpaces,
             .fullScreenAuxiliary,
@@ -22,14 +23,62 @@ public final class NotchPanel: NSPanel {
         self.hasShadow = false
         self.isMovableByWindowBackground = false
         self.isReleasedWhenClosed = false
+        self.acceptsMouseMovedEvents = true
+        self.hidesOnDeactivate = false
     }
 
     public override var canBecomeKey: Bool {
-        return false
+        // Allow becoming key so text inputs or keyboard focus can work if needed
+        return true
     }
 
     public override var canBecomeMain: Bool {
         return false
+    }
+}
+
+// Custom Hosting View that guarantees First Mouse and Native macOS Drag & Drop
+public final class CoveHostingView<Content: View>: NSHostingView<Content> {
+    public required init(rootView: Content) {
+        super.init(rootView: rootView)
+        registerForDraggedTypes([.fileURL, .URL])
+    }
+
+    @MainActor required dynamic init?(coder: NSCoder) {
+        super.init(coder: coder)
+        registerForDraggedTypes([.fileURL, .URL])
+    }
+
+    public override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        // Crucial: Allows single-click responsiveness on non-active overlay windows!
+        return true
+    }
+
+    public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        DispatchQueue.main.async {
+            NotchWindowManager.shared.expandFromDrag()
+        }
+        return .copy
+    }
+
+    public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        return .copy
+    }
+
+    public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let pasteboard = sender.draggingPasteboard
+        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty else {
+            return false
+        }
+
+        DispatchQueue.main.async {
+            for url in urls {
+                CoveEngine.shared.stage(url: url)
+            }
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            NotchWindowManager.shared.expandFromDrag()
+        }
+        return true
     }
 }
 
@@ -70,16 +119,16 @@ public final class NotchWindowManager: NSObject, ObservableObject {
             )
         )
 
-        let hostingView = NSHostingView(rootView: rootView)
-        hostingView.frame = initialRect
+        let hostingView = CoveHostingView(rootView: rootView)
+        hostingView.frame = NSRect(origin: .zero, size: initialRect.size)
+        hostingView.autoresizingMask = [.width, .height]
         panel.contentView = hostingView
 
-        setupTracking(for: hostingView)
         setupGlobalClickDismiss()
 
         panel.orderFrontRegardless()
 
-        // Screen change listener (e.g. plugging/unplugging monitor)
+        // Handle multi-display changes
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(screenParametersChanged),
@@ -93,23 +142,8 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         updateWindowFrame()
     }
 
-    private func setupTracking(for view: NSView) {
-        if let existing = trackingArea {
-            view.removeTrackingArea(existing)
-        }
-
-        let area = NSTrackingArea(
-            rect: view.bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        view.addTrackingArea(area)
-        self.trackingArea = area
-    }
-
     private func setupGlobalClickDismiss() {
-        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             guard let self = self, self.isExpanded else { return }
             if let panel = self.panel {
                 let mouseLocation = NSEvent.mouseLocation
@@ -130,6 +164,14 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         }
     }
 
+    public func expandFromDrag() {
+        if !self.isExpanded {
+            withAnimation(.spring(response: 0.36, dampingFraction: 0.75)) {
+                self.isExpanded = true
+            }
+        }
+    }
+
     private func updateWindowFrame() {
         guard let panel = panel else { return }
 
@@ -138,8 +180,8 @@ public final class NotchWindowManager: NSObject, ObservableObject {
 
         if isExpanded {
             let itemCount = CoveEngine.shared.items.count
-            targetWidth = max(440, CGFloat(itemCount * 90 + 160))
-            targetHeight = 140
+            targetWidth = max(460, CGFloat(itemCount * 90 + 160))
+            targetHeight = 145
         } else {
             targetWidth = currentMetrics.width
             targetHeight = currentMetrics.height

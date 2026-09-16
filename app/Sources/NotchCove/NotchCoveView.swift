@@ -97,9 +97,6 @@ public struct NotchCoveView: View {
         .padding(.horizontal, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
-        .onTapGesture {
-            NotchWindowManager.shared.toggleExpanded()
-        }
     }
 
     // MARK: - Expanded Shelf View

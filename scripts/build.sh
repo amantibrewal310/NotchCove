@@ -51,5 +51,8 @@ cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
 </plist>
 EOF
 
-echo "✨ Build succeeded! App bundle created at:"
+# Sign the app bundle ad-hoc (mandatory on Apple Silicon / macOS 14+)
+codesign --force --deep --sign - "$APP_BUNDLE"
+
+echo "✨ Build succeeded! App bundle created and signed at:"
 echo "   $APP_BUNDLE"

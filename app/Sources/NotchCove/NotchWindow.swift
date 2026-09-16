@@ -10,7 +10,6 @@ public final class NotchPanel: NSPanel {
             defer: false
         )
 
-        // Level .statusBar + 8: above menu bar, within macOS CoreDrag layer
         self.level = .statusBar + 8
         self.collectionBehavior = [
             .canJoinAllSpaces,
@@ -36,38 +35,6 @@ public final class NotchPanel: NSPanel {
     }
 }
 
-// Global & Local Event Monitor to detect clicks and file-drag gestures across macOS
-public final class GlobalEventMonitor {
-    private var globalMonitors: [Any] = []
-    private var localMonitors: [Any] = []
-
-    public init() {}
-
-    public func addMonitor(mask: NSEvent.EventTypeMask, handler: @escaping (NSEvent) -> Void) {
-        if let g = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: handler) {
-            globalMonitors.append(g)
-        }
-        if let l = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { event in
-            handler(event)
-            return event
-        }) {
-            localMonitors.append(l)
-        }
-    }
-
-    public func stop() {
-        for g in globalMonitors { NSEvent.removeMonitor(g) }
-        globalMonitors.removeAll()
-        for l in localMonitors { NSEvent.removeMonitor(l) }
-        localMonitors.removeAll()
-    }
-
-    deinit {
-        stop()
-    }
-}
-
-// Custom Hosting View providing native AppKit Drag & Drop and click handling
 public final class CoveHostingView<Content: View>: NSHostingView<Content> {
     public weak var windowManager: NotchWindowManager?
 
@@ -93,9 +60,20 @@ public final class CoveHostingView<Content: View>: NSHostingView<Content> {
         return true
     }
 
-    // Direct AppKit click handler on the hosting view
-    public override func mouseDown(with event: NSEvent) {
+    public override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let wm = windowManager else { return super.hitTest(point) }
+
         let mouseLoc = NSEvent.mouseLocation
+        let activeScreenRect = wm.currentScreenActiveRect().insetBy(dx: -15, dy: -15)
+
+        if activeScreenRect.contains(mouseLoc) {
+            return super.hitTest(point)
+        } else {
+            return nil
+        }
+    }
+
+    public override func mouseDown(with event: NSEvent) {
         guard let wm = windowManager else {
             super.mouseDown(with: event)
             return
@@ -103,33 +81,13 @@ public final class CoveHostingView<Content: View>: NSHostingView<Content> {
 
         if !wm.isExpanded {
             let pillRect = wm.currentScreenActiveRect().insetBy(dx: -15, dy: -15)
-            if pillRect.contains(mouseLoc) {
+            if pillRect.contains(NSEvent.mouseLocation) {
                 wm.expand()
-                return
-            }
-        } else {
-            let shelfRect = wm.currentScreenActiveRect().insetBy(dx: -10, dy: -10)
-            if !shelfRect.contains(mouseLoc) {
-                wm.collapse()
                 return
             }
         }
 
         super.mouseDown(with: event)
-    }
-
-    // Pass through clicks that are outside the active pill/shelf
-    public override func hitTest(_ point: NSPoint) -> NSView? {
-        guard let wm = windowManager else { return super.hitTest(point) }
-
-        let mouseLoc = NSEvent.mouseLocation
-        let activeScreenRect = wm.currentScreenActiveRect().insetBy(dx: -10, dy: -10)
-
-        if activeScreenRect.contains(mouseLoc) {
-            return super.hitTest(point)
-        } else {
-            return nil
-        }
     }
 
     // AppKit Dragging Destination
@@ -161,7 +119,6 @@ public final class CoveHostingView<Content: View>: NSHostingView<Content> {
     }
 }
 
-// Robust URL extraction supporting modern NSURL, legacy NSFilenames, and raw paths
 func extractURLs(from pasteboard: NSPasteboard) -> [URL] {
     var result: [URL] = []
 
@@ -194,9 +151,9 @@ public final class NotchWindowManager: NSObject, ObservableObject {
 
     private var panel: NotchPanel?
     private var hostingView: CoveHostingView<NotchCoveView>?
-    private let eventMonitor = GlobalEventMonitor()
+    private var globalClickMonitor: Any?
+    private var globalDragMonitor: Any?
 
-    // Fixed canvas anchored to top center
     private let canvasWidth: CGFloat = 640
     private let canvasHeight: CGFloat = 200
 
@@ -237,10 +194,8 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         panel.contentView = hostingView
         panel.orderFrontRegardless()
 
-        // Setup global mouse monitoring for click & drag detection
-        setupEventMonitors()
+        setupGlobalMonitors()
 
-        // Handle multi-display changes
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(screenParametersChanged),
@@ -249,9 +204,9 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         )
     }
 
-    private func setupEventMonitors() {
-        // Monitor Left Mouse Down across the entire OS
-        eventMonitor.addMonitor(mask: .leftMouseDown) { [weak self] _ in
+    private func setupGlobalMonitors() {
+        // Monitor clicks in other applications: dismiss shelf if open, or open if clicked pill
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
             guard let self = self else { return }
             let loc = NSEvent.mouseLocation
             DispatchQueue.main.async {
@@ -269,8 +224,8 @@ public final class NotchWindowManager: NSObject, ObservableObject {
             }
         }
 
-        // Monitor Left Mouse Drag across the entire OS (detects files being dragged towards notch)
-        eventMonitor.addMonitor(mask: .leftMouseDragged) { [weak self] _ in
+        // Monitor file dragging across the entire screen
+        globalDragMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged) { [weak self] _ in
             guard let self = self else { return }
             let loc = NSEvent.mouseLocation
             DispatchQueue.main.async {
@@ -301,7 +256,6 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         )
     }
 
-    // Active rect in global screen coordinates (for NSEvent.mouseLocation comparison)
     public func currentScreenActiveRect() -> NSRect {
         let screen = currentMetrics.screenFrame
         let targetWidth: CGFloat
@@ -335,7 +289,6 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
             self.isExpanded = false
         }
-        panel?.resignKey()
     }
 
     public func toggleExpanded() {

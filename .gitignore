@@ -1,0 +1,20 @@
+# Build artifacts
+build/
+target/
+.build/
+
+# macOS metadata
+.DS_Store
+*.swp
+*~
+
+# Swift / Xcode artifacts
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+
+# Rust
+core/target/
+**/*.rs.bk
+Cargo.lock

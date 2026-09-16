@@ -1,0 +1,4 @@
+module CCoveCore [system] {
+    header "cove_core.h"
+    export *
+}

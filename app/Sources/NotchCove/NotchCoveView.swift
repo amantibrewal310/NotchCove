@@ -230,7 +230,7 @@ struct FileIconView: NSViewRepresentable {
         }
         
         func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-            return [.copy, .move, .link, .generic]
+            return [.copy] // Force a copy so the original file in Finder is never moved/deleted
         }
         
         func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {

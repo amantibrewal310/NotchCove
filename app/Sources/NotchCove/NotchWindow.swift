@@ -630,10 +630,13 @@ public final class NotchWindowManager: NSObject, ObservableObject {
                 guard let self else { return }
                 if event.type == .mouseMoved {
                     self.evaluatePointer(NSEvent.mouseLocation)
-                } else if event.type == .leftMouseDown, event.window === self.panel, self.isExpanded, !self.isSticky {
+                } else if event.type == .leftMouseDown, event.window === self.panel, self.isExpanded {
                     // Clicking into the shelf keeps it open until you click elsewhere.
-                    self.openReason = .click
-                    self.takeKeyFocus()
+                    if !self.isSticky { self.openReason = .click }
+                    // Take focus back before the click lands (e.g. after using
+                    // another app): SwiftUI buttons ignore clicks in a window that
+                    // isn't key.
+                    if !self.isSticky || self.panel?.isKeyWindow == false { self.takeKeyFocus() }
                 }
             }
             return event

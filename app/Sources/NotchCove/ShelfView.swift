@@ -259,14 +259,6 @@ private struct ShelfHeader: View {
                 .buttonStyle(HeaderButtonStyle())
                 .accessibilityLabel("Clear shelf")
             }
-
-            Button {
-                manager.isSticky ? manager.collapse() : manager.expand(.click)
-            } label: {
-                Image(systemName: manager.isSticky ? "pin.fill" : "pin")
-            }
-            .buttonStyle(HeaderButtonStyle())
-            .accessibilityLabel(manager.isSticky ? "Unpin and close" : "Keep open")
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 12)

@@ -10,7 +10,7 @@ Built with a **Rust core engine** for high-performance file management and tempo
 
 - **Lives in the notch**
   - Sits flush with the MacBook camera notch (`NSScreen.safeAreaInsets`). On external or non-notched displays it draws a virtual notch inside the menu bar, so it never covers your windows.
-  - Hover the notch to peek, click to pin it open, or press **⌃⌥C** from anywhere.
+  - Hover the notch to peek, click it to keep it open until you click elsewhere, or press **⌃⌥C** from anywhere.
 - **Drag in, like Dropzone's Drop Bar**
   - The shelf opens with a drop zone as soon as you start dragging files, so you never have to push into the top edge (which triggers Mission Control). Release anywhere else and it closes itself. Prefer the quieter behaviour? *Open Shelf While Dragging → Only Near the Notch*.
   - Only real drag sessions trigger it. Moving windows or selecting text near the top of the screen does not.

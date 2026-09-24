@@ -14,8 +14,7 @@ void cove_init(const char* storage_dir);
 /// Stages a JSON array of paths as a single stack; returns staged items JSON.
 char* cove_stage_files(const char* paths_json);
 char* cove_get_staged_files(void);
-bool cove_remove_item(const char* id, bool delete_owned);
-bool cove_remove_group(const char* group_id);
+uint32_t cove_remove_items(const char* ids_json, bool delete_owned);
 bool cove_ungroup(const char* group_id);
 void cove_clear_all(void);
 uint32_t cove_prune_missing(void);

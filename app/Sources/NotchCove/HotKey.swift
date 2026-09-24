@@ -9,12 +9,11 @@ final class HotKey {
     private static var eventHandlerInstalled = false
 
     private var ref: EventHotKeyRef?
-    private let id: UInt32
 
     /// `keyCode` is a virtual key (e.g. `kVK_ANSI_C`); `modifiers` are Carbon flags (`controlKey | optionKey`).
     init?(keyCode: Int, modifiers: Int, handler: @escaping () -> Void) {
         Self.installEventHandlerIfNeeded()
-        id = Self.nextId
+        let id = Self.nextId
         Self.nextId += 1
 
         let hotKeyID = EventHotKeyID(signature: OSType(0x4E43_6F76), id: id) // 'NCov'
@@ -24,12 +23,6 @@ final class HotKey {
         )
         guard status == noErr else { return nil }
         Self.handlers[id] = handler
-    }
-
-    func unregister() {
-        if let ref { UnregisterEventHotKey(ref) }
-        ref = nil
-        Self.handlers[id] = nil
     }
 
     private static func installEventHandlerIfNeeded() {

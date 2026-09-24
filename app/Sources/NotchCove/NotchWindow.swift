@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Combine
 import Quartz
 import SwiftUI
@@ -11,238 +12,31 @@ func clog(_ msg: String) {
     #endif
 }
 
-// MARK: - NotchPanel
-
-public final class NotchPanel: NSPanel {
-    public init(contentRect: NSRect) {
-        super.init(
-            contentRect: contentRect,
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        level = .statusBar + 8
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = false
-        isMovable = false
-        isReleasedWhenClosed = false
-        acceptsMouseMovedEvents = true
-        hidesOnDeactivate = false
-        animationBehavior = .none
-    }
-
-    public override var canBecomeKey: Bool { true }
-    public override var canBecomeMain: Bool { false }
-
-    /// Card that received the current mouse-down; gets the drags and mouse-up.
-    private weak var trackedCard: CardInteractionView.CardNSView?
-
-    /// Clicks on cards go straight to the card view. Routed through SwiftUI's
-    /// hosting view, mouse-downs on embedded AppKit views were sometimes held
-    /// back indefinitely, so clicks, double-clicks and drags on cards got lost.
-    public override func sendEvent(_ event: NSEvent) {
-        switch event.type {
-        case .leftMouseDown:
-            if let card = card(at: event) {
-                trackedCard = card
-                card.mouseDown(with: event)
-                return
-            }
-        case .leftMouseDragged:
-            if let card = trackedCard { card.mouseDragged(with: event); return }
-        case .leftMouseUp:
-            if let card = trackedCard {
-                trackedCard = nil
-                card.mouseUp(with: event)
-                return
-            }
-        case .scrollWheel:
-            MainActor.assumeIsolated { NotchWindowManager.shared.noteScrolling() }
-        case .rightMouseDown:
-            if let card = card(at: event) {
-                if let menu = card.menu(for: event) {
-                    NSMenu.popUpContextMenu(menu, with: event, for: card)
-                }
-                return
-            }
-        default:
-            break
-        }
-        super.sendEvent(event)
-    }
-
-    private func card(at event: NSEvent) -> CardInteractionView.CardNSView? {
-        card(atWindowPoint: event.locationInWindow)
-    }
-
-    private func card(atWindowPoint point: NSPoint) -> CardInteractionView.CardNSView? {
-        guard let content = contentView else { return nil }
-        var view = content.hitTest(content.convert(point, from: nil))
-        while let current = view {
-            if let card = current as? CardInteractionView.CardNSView { return card }
-            view = current.superview
-        }
-        return nil
-    }
-
-    public override func keyDown(with event: NSEvent) {
-        if !MainActor.assumeIsolated({ NotchWindowManager.shared.handleKey(event) }) {
-            super.keyDown(with: event)
-        }
-    }
-
-    public override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        MainActor.assumeIsolated { NotchWindowManager.shared.handleKey(event) }
-            || super.performKeyEquivalent(with: event)
-    }
-
-    // Quick Look responder-chain hooks.
-    public override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
-    public override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        MainActor.assumeIsolated { QuickLookController.shared.begin(panel) }
-    }
-    public override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        MainActor.assumeIsolated { QuickLookController.shared.end(panel) }
-    }
-}
-
-// MARK: - Hosting view (drop destination)
-
-public final class CoveHostingView: NSHostingView<NotchRootView> {
-    private var manager: NotchWindowManager { MainActor.assumeIsolated { .shared } }
-
-    public required init(rootView: NotchRootView) {
-        super.init(rootView: rootView)
-        registerForDraggedTypes(DropIngest.draggedTypes)
-    }
-
-    @MainActor required dynamic init?(coder: NSCoder) {
-        fatalError("init(coder:) not supported")
-    }
-
-    public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    // Hover is detected with a tracking area on this small window rather than a
-    // system-wide mouse monitor, so pointer movement elsewhere costs nothing.
-    private var hoverArea: NSTrackingArea?
-
-    public override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let hoverArea { removeTrackingArea(hoverArea) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        hoverArea = area
-    }
-
-    // Always call super: SwiftUI's own pointer tracking relies on these, and
-    // starving it stops clicks from reaching the cards.
-    public override func mouseEntered(with event: NSEvent) {
-        super.mouseEntered(with: event)
-        if event.trackingArea === hoverArea { manager.pointerMoved(to: NSEvent.mouseLocation) }
-    }
-    public override func mouseMoved(with event: NSEvent) {
-        super.mouseMoved(with: event)
-        manager.pointerMoved(to: NSEvent.mouseLocation)
-    }
-    public override func mouseExited(with event: NSEvent) {
-        super.mouseExited(with: event)
-        if event.trackingArea === hoverArea { manager.pointerMoved(to: NSEvent.mouseLocation) }
-    }
-
-    /// Clicks on the transparent shadow margin fall through to nothing rather
-    /// than landing on invisible controls.
-    public override func hitTest(_ point: NSPoint) -> NSView? {
-        guard let window else { return super.hitTest(point) }
-        let screenPoint = window.convertPoint(toScreen: convert(point, to: nil))
-        return manager.interactiveRect.contains(screenPoint) ? super.hitTest(point) : nil
-    }
-
-    public override func mouseDown(with event: NSEvent) {
-        if !manager.isExpanded {
-            manager.expand(.click)
-            return
-        }
-        super.mouseDown(with: event)
-    }
-
-    private func screenPoint(_ info: NSDraggingInfo) -> NSPoint {
-        window?.convertPoint(toScreen: info.draggingLocation) ?? NSEvent.mouseLocation
-    }
-
-    /// Whether the current drag session carries anything we can take, read
-    /// once per session instead of on every draggingUpdated.
-    private var acceptCache: (session: Int, accepts: Bool)?
-
-    private func operation(for info: NSDraggingInfo) -> NSDragOperation {
-        // Ignore our own items being dragged back in.
-        if info.draggingSource is DragOutCoordinator { return [] }
-        if acceptCache?.session != info.draggingSequenceNumber {
-            acceptCache = (info.draggingSequenceNumber, DropIngest.canAccept(info.draggingPasteboard))
-        }
-        guard acceptCache?.accepts == true else { return [] }
-        return manager.dropHovered(at: screenPoint(info)) ? .copy : []
-    }
-
-    public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        operation(for: sender)
-    }
-
-    public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        operation(for: sender)
-    }
-
-    public override func draggingExited(_ sender: NSDraggingInfo?) {
-        manager.dropExited()
-    }
-
-    public override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        !(sender.draggingSource is DragOutCoordinator)
-    }
-
-    public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        let manager = self.manager
-        DropIngest.ingest(sender.draggingPasteboard) { count in
-            manager.didReceiveDrop(count: count)
-        }
-        return true
-    }
-
-    public override func draggingEnded(_ sender: NSDraggingInfo) {
-        manager.externalDragFinished()
-    }
-}
-
 // MARK: - NotchWindowManager
 
 /// Owns the notch panel and decides when the shelf opens and closes.
-///
-/// Why it opens:
-/// - `.hover`: pointer rests on the notch. Closes when the pointer leaves.
-/// - `.drag`: files dragged toward the notch. Closes when the drag leaves or ends.
-/// - `.click` / `.hotKey`: stays open until you click outside, press Esc, or toggle.
 @MainActor
-public final class NotchWindowManager: NSObject, ObservableObject {
-    public static let shared = NotchWindowManager()
+final class NotchWindowManager: NSObject, ObservableObject {
+    static let shared = NotchWindowManager()
 
-    public enum OpenReason { case hover, drag, click, hotKey, peek }
+    /// Hover and drag opens close when the pointer or drag leaves; click and
+    /// hotkey opens are sticky; a peek closes on a timer.
+    enum OpenReason {
+        case hover, drag, click, hotKey, peek
+        var isSticky: Bool { self == .click || self == .hotKey }
+    }
 
-    @Published public private(set) var isExpanded = false
-    @Published public private(set) var metrics: NotchMetrics = .current()
+    @Published private(set) var isExpanded = false
+    @Published private(set) var metrics: NotchMetrics = .current()
     /// Files are being dragged from another app and the shelf is showing its drop zone.
-    @Published public private(set) var isReceivingDrag = false
+    @Published private(set) var isReceivingDrag = false
     /// The dragged files are over the shelf and would be accepted.
-    @Published public private(set) var isDropTargeted = false
-    @Published public private(set) var dropPulse = 0
-    @Published public var selection: Set<String> = []
+    @Published private(set) var isDropTargeted = false
+    @Published private(set) var dropPulse = 0
+    @Published var selection: Set<String> = []
     /// Per-card hover state, so a hover change redraws one card, not the whole shelf.
-    public final class HoverState: ObservableObject {
-        @Published public var isHovered = false
+    final class HoverState: ObservableObject {
+        @Published var isHovered = false
     }
     private var hoverStates: [String: HoverState] = [:]
     private var hoveredCardId: String?
@@ -268,7 +62,7 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
 
-    public func hoverState(for id: String) -> HoverState {
+    func hoverState(for id: String) -> HoverState {
         if let state = hoverStates[id] { return state }
         let state = HoverState()
         hoverStates[id] = state
@@ -298,8 +92,8 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         }
     }
 
-    @Published public private(set) var openStackId: String?
-    @Published public private(set) var openReason: OpenReason = .hover
+    @Published private(set) var openStackId: String?
+    @Published private(set) var openReason: OpenReason = .hover
     @Published private(set) var theme: ShelfTheme = ThemeChoice.current.theme
 
     func setTheme(_ choice: ThemeChoice) {
@@ -307,9 +101,8 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         theme = choice.theme
     }
 
-    public var isSticky: Bool { openReason == .click || openReason == .hotKey }
+    var isSticky: Bool { openReason.isSticky }
 
-    /// Show the item count beside the closed notch.
     static let showCountKey = "ShowCountBesideNotch"
     @Published private(set) var showsCountBesideNotch =
         UserDefaults.standard.object(forKey: showCountKey) as? Bool ?? true
@@ -354,10 +147,23 @@ public final class NotchWindowManager: NSObject, ObservableObject {
 
     /// A full-screen app is showing on the notch's display.
     @Published private(set) var fullScreenActive = false
+
+    /// Without a real notch there's no black strip to blend into in full
+    /// screen, so the closed virtual notch turns invisible and lets clicks
+    /// through to the app. Hovering the spot (via the move monitor), file drags
+    /// and the hotkey still open the shelf.
+    private var hidesCollapsedNotch: Bool { fullScreenActive && !metrics.hasPhysicalNotch }
+
+    private func updateCollapsedVisibility() {
+        guard let panel, !isExpanded else { return }
+        let hide = hidesCollapsedNotch
+        panel.alphaValue = hide ? 0 : 1
+        panel.ignoresMouseEvents = hide
+        setMoveMonitorActive(hide)
+    }
     private var fullScreenChecks: [DispatchWorkItem] = []
 
     private var panel: NotchPanel?
-    private var hostingView: CoveHostingView?
     private var monitors: [Any] = []
     /// System-wide pointer monitor, installed only while the shelf is open.
     private var moveMonitor: Any?
@@ -365,7 +171,9 @@ public final class NotchWindowManager: NSObject, ObservableObject {
     private var hoverOpenWork: DispatchWorkItem?
     private var collapseWork: DispatchWorkItem?
     private var resizeWork: DispatchWorkItem?
-    private var dragChangeCountAtMouseDown = NSPasteboard(name: .drag).changeCount
+    private let dragPasteboard = NSPasteboard(name: .drag)
+    /// Drag pasteboard contents already seen, so a non-file drag is checked only once.
+    private lazy var ignoredDragChangeCount = dragPasteboard.changeCount
     private var externalDragInProgress = false
     private var menuIsTracking = false
     /// After closing with the pointer still on the notch, don't reopen until it leaves.
@@ -377,7 +185,7 @@ public final class NotchWindowManager: NSObject, ObservableObject {
 
     // MARK: Setup
 
-    public func setup() {
+    func setup() {
         guard panel == nil else { return }
         metrics = .current()
 
@@ -388,7 +196,6 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         panel.contentView = hosting
         panel.orderFrontRegardless()
         self.panel = panel
-        self.hostingView = hosting
 
         installMonitors()
 
@@ -432,8 +239,7 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         clog("[Setup] notch=\(metrics.hasPhysicalNotch) size=\(metrics.notchWidth)x\(metrics.notchHeight)")
     }
 
-    /// Applies a new ShelfSize immediately.
-    public func setShelfSize(_ size: ShelfSize) {
+    func setShelfSize(_ size: ShelfSize) {
         ShelfSize.current = size
         screenParametersChanged()
     }
@@ -475,7 +281,7 @@ public final class NotchWindowManager: NSObject, ObservableObject {
     }
 
     /// Screen area that responds to the pointer right now.
-    public var interactiveRect: NSRect {
+    var interactiveRect: NSRect {
         (isExpanded ? metrics.shelfRect : collapsedFrame).insetBy(dx: 0, dy: -2)
     }
 
@@ -489,6 +295,15 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         metrics.shelfRect.insetBy(dx: -14, dy: -14)
     }
 
+    /// Resting the pointer here opens a closed shelf.
+    private var hoverOpenRect: NSRect {
+        let rect = collapsedFrame.insetBy(dx: -4, dy: -2)
+        // Invisible in full screen: only the very top edge, so the app's own
+        // toolbar underneath (tabs, address bar) stays usable.
+        guard hidesCollapsedNotch else { return rect }
+        return NSRect(x: rect.minX, y: metrics.screenFrame.maxY - 3, width: rect.width, height: 5)
+    }
+
     private func applyFrame(animatedShrink: Bool) {
         guard let panel else { return }
         resizeWork?.cancel()
@@ -499,21 +314,23 @@ public final class NotchWindowManager: NSObject, ObservableObject {
             let work = DispatchWorkItem { [weak self] in
                 guard let self, !self.isExpanded else { return }
                 self.panel?.setFrame(self.collapsedFrame, display: true)
+                self.updateCollapsedVisibility()
             }
             resizeWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
         } else {
             panel.setFrame(collapsedFrame, display: true)
+            updateCollapsedVisibility()
         }
     }
 
     // MARK: Open / close
 
-    public func expand(_ reason: OpenReason) {
+    func expand(_ reason: OpenReason) {
         cancelPending()
         if isExpanded {
             // Upgrade to a sticky open, never downgrade.
-            if reason == .click || reason == .hotKey {
+            if reason.isSticky {
                 openReason = reason
                 takeKeyFocus()
             }
@@ -523,13 +340,15 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         openReason = reason
         // Grow the (transparent) window first, then animate the shelf inside it.
         resizeWork?.cancel()
+        panel?.alphaValue = 1
+        panel?.ignoresMouseEvents = false
         panel?.setFrame(expandedFrame, display: true)
-        if reason == .click || reason == .hotKey { takeKeyFocus() }
+        if reason.isSticky { takeKeyFocus() }
         withAnimation(Self.openAnimation) { isExpanded = true }
         setMoveMonitorActive(true)
     }
 
-    public func collapse() {
+    func collapse() {
         cancelPending()
         guard isExpanded else { return }
         if QuickLookController.shared.isVisible { QLPreviewPanel.shared().orderOut(nil) }
@@ -541,22 +360,21 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         }
         selection = []
         setHovered(hoveredCardId, false)
-        setMoveMonitorActive(false)
-        hoverSuppressedUntilExit = collapsedFrame.insetBy(dx: -4, dy: -2).contains(NSEvent.mouseLocation)
+        setMoveMonitorActive(hidesCollapsedNotch)
+        hoverSuppressedUntilExit = hoverOpenRect.contains(NSEvent.mouseLocation)
         relinquishKeyFocus()
         applyFrame(animatedShrink: true)
     }
 
-    public func toggleFromHotKey() {
+    func toggleFromHotKey() {
         isExpanded && isSticky ? collapse() : expand(.hotKey)
     }
 
     /// App that was frontmost before we took keyboard focus, to hand it back on close.
     private var previousApp: NSRunningApplication?
 
-    /// Opened on purpose (hotkey, click): become the active app so keys like
-    /// ⌘V, Space and Esc reach the shelf instead of the app in front (e.g. a
-    /// full-screen editor). Hover and drags never do this, so they never steal focus.
+    /// Opened on purpose (hotkey, click): become the active app so keys like ⌘V,
+    /// Space and Esc reach the shelf. Hover and drags never steal focus.
     func takeKeyFocus() {
         if !NSApp.isActive {
             let front = NSWorkspace.shared.frontmostApplication
@@ -578,8 +396,18 @@ public final class NotchWindowManager: NSObject, ObservableObject {
     }
 
     private func cancelPending() {
-        hoverOpenWork?.cancel(); hoverOpenWork = nil
-        collapseWork?.cancel(); collapseWork = nil
+        cancelHoverOpen()
+        cancelCollapse()
+    }
+
+    private func cancelHoverOpen() {
+        hoverOpenWork?.cancel()
+        hoverOpenWork = nil
+    }
+
+    private func cancelCollapse() {
+        collapseWork?.cancel()
+        collapseWork = nil
     }
 
     private func scheduleCollapse(after delay: TimeInterval) {
@@ -598,7 +426,7 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.hoverOpenWork = nil
-            if self.collapsedFrame.insetBy(dx: -4, dy: -2).contains(NSEvent.mouseLocation),
+            if self.hoverOpenRect.contains(NSEvent.mouseLocation),
                NSEvent.pressedMouseButtons == 0 {
                 self.expand(.hover)
             }
@@ -608,7 +436,7 @@ public final class NotchWindowManager: NSObject, ObservableObject {
     }
 
     /// Something (a menu, Quick Look, a drag out) is using the shelf, so it must stay put.
-    private var isBusy: Bool {
+    var isBusy: Bool {
         menuIsTracking || ItemActions.isSharing || QuickLookController.shared.isVisible
             || DragOutCoordinator.shared.isDragging
     }
@@ -616,10 +444,8 @@ public final class NotchWindowManager: NSObject, ObservableObject {
     // MARK: Pointer tracking
 
     private func installMonitors() {
-        // Mouse monitors don't need Accessibility permission. Only clicks are
-        // monitored system-wide: pointer movement uses a tracking area (plus
-        // moveMonitor while open), and drags are sampled by dragPollTimer, so
-        // high-frequency event streams never reach this process.
+        // Only clicks are monitored system-wide (no Accessibility permission needed):
+        // moves use a tracking area (plus moveMonitor while open), drags are polled.
         let global = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] event in
@@ -633,9 +459,8 @@ public final class NotchWindowManager: NSObject, ObservableObject {
                 } else if event.type == .leftMouseDown, event.window === self.panel, self.isExpanded {
                     // Clicking into the shelf keeps it open until you click elsewhere.
                     if !self.isSticky { self.openReason = .click }
-                    // Take focus back before the click lands (e.g. after using
-                    // another app): SwiftUI buttons ignore clicks in a window that
-                    // isn't key.
+                    // Take focus back before the click lands: SwiftUI buttons
+                    // ignore clicks in a window that isn't key.
                     if !self.isSticky || self.panel?.isKeyWindow == false { self.takeKeyFocus() }
                 }
             }
@@ -693,7 +518,7 @@ public final class NotchWindowManager: NSObject, ObservableObject {
             pointerMoved(to: loc)
         case .leftMouseDown, .rightMouseDown:
             if externalDragInProgress { externalDragFinished() }
-            dragChangeCountAtMouseDown = NSPasteboard(name: .drag).changeCount
+            ignoredDragChangeCount = dragPasteboard.changeCount
             if isExpanded, !keepOpenRect.contains(loc), !isBusy { collapse() }
             if event.type == .leftMouseDown { startDragPolling() }
         default:
@@ -704,22 +529,22 @@ public final class NotchWindowManager: NSObject, ObservableObject {
     private func evaluatePointer(_ loc: NSPoint) {
         guard !isBusy, !externalDragInProgress else { return }
         if !isExpanded {
-            if collapsedFrame.insetBy(dx: -4, dy: -2).contains(loc) {
+            if hoverOpenRect.contains(loc) {
                 // A held button means a text selection or window drag passing by, not a hover.
                 if !hoverSuppressedUntilExit, NSEvent.pressedMouseButtons == 0 { scheduleHoverOpen() }
             } else {
                 hoverSuppressedUntilExit = false
-                hoverOpenWork?.cancel(); hoverOpenWork = nil
+                cancelHoverOpen()
             }
         } else if openReason == .peek {
             // A peek closes on its own timer; reaching for it turns it into a hover open.
             if keepOpenRect.contains(loc) {
                 openReason = .hover
-                collapseWork?.cancel(); collapseWork = nil
+                cancelCollapse()
             }
         } else if !isSticky {
             if keepOpenRect.contains(loc) {
-                collapseWork?.cancel(); collapseWork = nil
+                cancelCollapse()
             } else {
                 scheduleCollapse(after: 0.3)
             }
@@ -730,22 +555,22 @@ public final class NotchWindowManager: NSObject, ObservableObject {
     private func handleExternalDrag(at loc: NSPoint) {
         guard !DragOutCoordinator.shared.isDragging else { return }
         let openOnDragStart = DragOpenMode.current == .dragStart
-        // In "near the notch" mode most drags happen far away; don't touch the
-        // pasteboard server for them. (This only runs while the button is held.)
+        // In "near the notch" mode most drags happen far away; skip the pasteboard for them.
         guard externalDragInProgress || isExpanded || openOnDragStart || dragWatchRect.contains(loc) else { return }
-        let pasteboard = NSPasteboard(name: .drag)
         if !externalDragInProgress {
-            // Only a real drag session changes the drag pasteboard; window moves and
-            // text selection don't, so they never trigger the shelf.
-            guard pasteboard.changeCount != dragChangeCountAtMouseDown, DropIngest.canAccept(pasteboard) else { return }
+            // Only a real drag session changes the drag pasteboard; window moves and text selection don't.
+            let changeCount = dragPasteboard.changeCount
+            guard changeCount != ignoredDragChangeCount else { return }
+            guard DropIngest.canAccept(dragPasteboard) else {
+                ignoredDragChangeCount = changeCount
+                return
+            }
             externalDragInProgress = true
         }
 
         let near = openOnDragStart || metrics.dragMagnetRect.contains(loc) || (isExpanded && keepOpenRect.contains(loc))
         if near {
-            collapseWork?.cancel(); collapseWork = nil
-            if !isExpanded { expand(.drag) }
-            if !isReceivingDrag { withAnimation(Self.openAnimation) { isReceivingDrag = true } }
+            showDropZone()
         } else if isExpanded, !isSticky {
             scheduleCollapse(after: 0.35)
         } else if isReceivingDrag {
@@ -753,14 +578,18 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         }
     }
 
+    private func showDropZone() {
+        cancelCollapse()
+        if !isExpanded { expand(.drag) }
+        if !isReceivingDrag { withAnimation(Self.openAnimation) { isReceivingDrag = true } }
+    }
+
     // MARK: Drop destination callbacks
 
     /// Returns whether a drop at `point` would land on the shelf.
     func dropHovered(at point: NSPoint) -> Bool {
         externalDragInProgress = true
-        collapseWork?.cancel(); collapseWork = nil
-        if !isExpanded { expand(.drag) }
-        if !isReceivingDrag { withAnimation(Self.openAnimation) { isReceivingDrag = true } }
+        showDropZone()
         let targeted = metrics.shelfRect.contains(point)
         if targeted != isDropTargeted {
             withAnimation(.easeOut(duration: 0.15)) { isDropTargeted = targeted }
@@ -818,7 +647,7 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         if isExpanded, !keepOpenRect.contains(point) {
             scheduleCollapse(after: 0.25)
         } else {
-            collapseWork?.cancel(); collapseWork = nil
+            cancelCollapse()
         }
     }
 
@@ -844,7 +673,7 @@ public final class NotchWindowManager: NSObject, ObservableObject {
     // MARK: Stacks & selection
 
     /// What the shelf shows: stacks, or the files of the open stack.
-    public var displayedCards: [ShelfStack] {
+    var displayedCards: [ShelfStack] {
         if let cached = cardsCache, cached.revision == engine.revision, cached.openStackId == openStackId {
             return cached.cards
         }
@@ -858,23 +687,18 @@ public final class NotchWindowManager: NSObject, ObservableObject {
     }
     private var cardsCache: (revision: Int, openStackId: String?, cards: [ShelfStack])?
 
-    public var selectedItems: [StagedItem] {
+    var selectedItems: [StagedItem] {
         displayedCards.filter { selection.contains($0.id) }.flatMap(\.items)
     }
 
-    public func openStack(_ id: String) {
+    func openStack(_ id: String?) {
         withAnimation(Self.openAnimation) {
             openStackId = id
             selection = []
         }
     }
 
-    public func closeStack() {
-        withAnimation(Self.openAnimation) {
-            openStackId = nil
-            selection = []
-        }
-    }
+    func closeStack() { openStack(nil) }
 
     func extendSelection(to id: String) {
         let ids = displayedCards.map(\.id)
@@ -892,24 +716,24 @@ public final class NotchWindowManager: NSObject, ObservableObject {
         let chars = event.charactersIgnoringModifiers?.lowercased()
         let cards = displayedCards
 
-        switch (event.keyCode, flags) {
-        case (53, []): // Esc
+        switch (Int(event.keyCode), flags) {
+        case (kVK_Escape, []):
             if openStackId != nil { closeStack() } else { collapse() }
-        case (49, []): // Space
+        case (kVK_Space, []):
             let items = selectedItems.isEmpty ? cards.first?.items ?? [] : selectedItems
             ItemActions.quickLook(items)
-        case (36, []), (125, [.command]): // Return, ⌘↓
+        case (kVK_Return, []), (kVK_DownArrow, [.command]):
             if selection.count == 1, let card = cards.first(where: { selection.contains($0.id) }), card.isStack {
                 openStack(card.id)
             } else {
                 ItemActions.open(selectedItems)
             }
-        case (51, []), (117, []), (51, [.command]): // Delete, Forward delete, ⌘⌫
+        case (kVK_Delete, []), (kVK_ForwardDelete, []), (kVK_Delete, [.command]):
             guard !selection.isEmpty else { return false }
             ItemActions.remove(selectedItems)
-        case (123, []), (124, []): // ← →
-            moveSelection(by: event.keyCode == 123 ? -1 : 1, in: cards)
-        case (126, [.command]): // ⌘↑
+        case (kVK_LeftArrow, []), (kVK_RightArrow, []):
+            moveSelection(by: Int(event.keyCode) == kVK_LeftArrow ? -1 : 1, in: cards)
+        case (kVK_UpArrow, [.command]):
             if openStackId != nil { closeStack() }
         default:
             switch (chars, flags) {

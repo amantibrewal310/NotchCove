@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StagedItem {
@@ -11,14 +12,9 @@ pub struct StagedItem {
     pub group_id: String,
     pub original_path: String,
     pub filename: String,
-    pub extension: String,
     pub size_bytes: u64,
-    pub formatted_size: String,
-    pub is_directory: bool,
-    pub kind: String,
     pub staged_at: u64,
-    /// True when the file lives in NotchCove's inbox (text snippets, web images,
-    /// promised files, archives) and should be deleted when removed from the shelf.
+    /// The file lives in NotchCove's inbox and is deleted when removed from the shelf.
     #[serde(default)]
     pub owned: bool,
 }
@@ -38,14 +34,12 @@ impl ShelfManager {
         }
     }
 
-    /// Creates a manager persisted to `storage_dir/shelf.json`, restoring any
-    /// previously saved items whose files still exist.
+    /// Restores items from `storage_dir/shelf.json`, dropping any whose files are gone.
     pub fn with_storage(max_items: usize, storage_dir: &Path) -> Self {
         let _ = fs::create_dir_all(storage_dir.join("Inbox"));
         let mut shelf = Self {
-            items: Vec::new(),
-            max_items,
             storage_dir: Some(storage_dir.to_path_buf()),
+            ..Self::new(max_items)
         };
         if let Ok(data) = fs::read_to_string(shelf.state_file().unwrap()) {
             if let Ok(items) = serde_json::from_str::<Vec<StagedItem>>(&data) {
@@ -66,7 +60,7 @@ impl ShelfManager {
 
     fn save(&self) {
         let Some(file) = self.state_file() else { return };
-        if let Ok(json) = serde_json::to_string_pretty(&self.items) {
+        if let Ok(json) = serde_json::to_vec(&self.items) {
             let tmp = file.with_extension("json.tmp");
             if fs::write(&tmp, json).is_ok() {
                 let _ = fs::rename(&tmp, &file);
@@ -80,7 +74,7 @@ impl ShelfManager {
             .unwrap_or(false)
     }
 
-    /// Stages a single path as its own group.
+    #[cfg(test)]
     pub fn stage_file(&mut self, path_str: &str) -> Result<StagedItem, String> {
         self.stage_files(&[path_str.to_string()])
             .and_then(|mut v| v.pop().ok_or_else(|| "Nothing staged".to_string()))
@@ -92,6 +86,7 @@ impl ShelfManager {
         let now = now_secs();
         let group_id = format!("g{}_{}", now, next_id());
         let mut staged = Vec::new();
+        let mut seen = HashSet::new();
 
         for raw in paths {
             let clean = raw.trim();
@@ -102,43 +97,22 @@ impl ShelfManager {
                 continue;
             }
             let path_string = path.to_string_lossy().to_string();
-            if staged.iter().any(|i: &StagedItem| i.original_path == path_string) {
+            if !seen.insert(path_string.clone()) {
                 continue;
             }
-            self.items.retain(|i| i.original_path != path_string);
 
             let metadata = path.metadata().map_err(|e| e.to_string())?;
-            let is_dir = metadata.is_dir();
-            let (size_bytes, size_is_partial) = if is_dir {
-                dir_size(path)
-            } else {
-                (metadata.len(), false)
-            };
-            let filename = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "Untitled".to_string());
-            let extension = path
-                .extension()
-                .map(|e| e.to_string_lossy().to_lowercase())
-                .unwrap_or_default();
-
             staged.push(StagedItem {
                 id: format!("i{}_{}", now, next_id()),
                 group_id: group_id.clone(),
-                kind: detect_kind(&extension, is_dir).to_string(),
-                formatted_size: if size_is_partial {
-                    format!("{}+", format_size(size_bytes))
-                } else {
-                    format_size(size_bytes)
-                },
+                filename: path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "Untitled".to_string()),
+                size_bytes: if metadata.is_dir() { dir_size(path) } else { metadata.len() },
+                staged_at: now,
                 owned: self.is_in_inbox(path),
                 original_path: path_string,
-                filename,
-                extension,
-                size_bytes,
-                is_directory: is_dir,
-                staged_at: now,
             });
         }
 
@@ -146,9 +120,8 @@ impl ShelfManager {
             return Err("No valid files to stage".to_string());
         }
 
-        for (offset, item) in staged.iter().enumerate() {
-            self.items.insert(offset, item.clone());
-        }
+        self.items.retain(|i| !seen.contains(&i.original_path));
+        self.items.splice(0..0, staged.iter().cloned());
         while self.items.len() > self.max_items {
             if let Some(evicted) = self.items.pop() {
                 self.delete_if_owned(&evicted);
@@ -175,31 +148,26 @@ impl ShelfManager {
         }
     }
 
-    /// Removes an item. Pass `delete_owned = false` when the file was moved
+    /// Removes items. Pass `delete_owned = false` when the files were moved
     /// elsewhere by a drag-out and must not be deleted.
-    pub fn remove_item(&mut self, id: &str, delete_owned: bool) -> bool {
-        let Some(idx) = self.items.iter().position(|i| i.id == id) else {
-            return false;
-        };
-        let item = self.items.remove(idx);
-        if delete_owned {
-            self.delete_if_owned(&item);
-        }
-        self.save();
-        true
+    pub fn remove_items(&mut self, ids: &[String], delete_owned: bool) -> usize {
+        let ids: HashSet<&str> = ids.iter().map(String::as_str).collect();
+        self.remove_where(|i| ids.contains(i.id.as_str()), delete_owned)
     }
 
-    pub fn remove_group(&mut self, group_id: &str) -> bool {
-        let (removed, kept): (Vec<_>, Vec<_>) = self
-            .items
-            .drain(..)
-            .partition(|i| i.group_id == group_id);
+    /// Removes matching items and saves if anything changed. Returns the count removed.
+    fn remove_where(&mut self, pred: impl Fn(&StagedItem) -> bool, delete_owned: bool) -> usize {
+        let (removed, kept): (Vec<_>, Vec<_>) = self.items.drain(..).partition(|i| pred(i));
         self.items = kept;
-        for item in &removed {
-            self.delete_if_owned(item);
+        if delete_owned {
+            for item in &removed {
+                self.delete_if_owned(item);
+            }
         }
-        self.save();
-        !removed.is_empty()
+        if !removed.is_empty() {
+            self.save();
+        }
+        removed.len()
     }
 
     /// Splits a stack so each file becomes its own group.
@@ -216,26 +184,13 @@ impl ShelfManager {
     }
 
     pub fn clear_all(&mut self) {
-        for item in std::mem::take(&mut self.items) {
-            self.delete_if_owned(&item);
-        }
-        self.save();
+        self.remove_where(|_| true, true);
     }
 
-    /// Removes items staged more than `max_age_secs` before `now` (owned inbox
-    /// files are deleted; user files are only taken off the shelf).
+    /// Removes items staged more than `max_age_secs` before `now`.
     pub fn expire_older_than(&mut self, max_age_secs: u64, now: u64) -> usize {
         let cutoff = now.saturating_sub(max_age_secs);
-        let (expired, kept): (Vec<_>, Vec<_>) =
-            self.items.drain(..).partition(|i| i.staged_at < cutoff);
-        self.items = kept;
-        for item in &expired {
-            self.delete_if_owned(item);
-        }
-        if !expired.is_empty() {
-            self.save();
-        }
-        expired.len()
+        self.remove_where(|i| i.staged_at < cutoff, true)
     }
 
     /// Unix time at which the oldest item expires, if any.
@@ -259,25 +214,21 @@ impl ShelfManager {
     }
 }
 
+fn since_epoch() -> Duration {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default()
+}
+
 pub fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+    since_epoch().as_secs()
 }
 
 fn next_id() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .subsec_nanos();
-    format!("{:x}{:x}", COUNTER.fetch_add(1, Ordering::Relaxed), nanos)
+    format!("{:x}{:x}", COUNTER.fetch_add(1, Ordering::Relaxed), since_epoch().subsec_nanos())
 }
 
-/// Recursive size of a folder. Staging runs on the UI thread, so the walk is
-/// capped; the bool is true when the cap was hit and the size is a lower bound.
-fn dir_size(path: &Path) -> (u64, bool) {
+/// Recursive size of a folder. Staging runs on the UI thread, so the walk is capped.
+fn dir_size(path: &Path) -> u64 {
     fn walk(path: &Path, budget: &mut u32) -> u64 {
         let Ok(entries) = fs::read_dir(path) else { return 0 };
         let mut total = 0;
@@ -295,49 +246,7 @@ fn dir_size(path: &Path) -> (u64, bool) {
         }
         total
     }
-    let mut budget = 5_000;
-    let total = walk(path, &mut budget);
-    (total, budget == 0)
-}
-
-pub fn detect_kind(extension: &str, is_dir: bool) -> &'static str {
-    if is_dir {
-        return match extension {
-            "app" => "app",
-            _ => "folder",
-        };
-    }
-    match extension {
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "heic" | "bmp" | "tiff" | "tif" => {
-            "image"
-        }
-        "mp4" | "mov" | "mkv" | "avi" | "webm" | "m4v" => "video",
-        "mp3" | "wav" | "flac" | "m4a" | "aac" | "ogg" | "aiff" => "audio",
-        "zip" | "tar" | "gz" | "bz2" | "7z" | "rar" | "dmg" | "pkg" | "xz" => "archive",
-        "pdf" | "doc" | "docx" | "pages" | "txt" | "md" | "rtf" | "key" | "numbers" | "xlsx"
-        | "pptx" | "csv" => "document",
-        "rs" | "swift" | "js" | "ts" | "py" | "c" | "cpp" | "h" | "json" | "html" | "css"
-        | "go" | "java" | "rb" | "sh" | "yml" | "yaml" | "toml" => "code",
-        "webloc" | "url" => "link",
-        _ => "other",
-    }
-}
-
-pub fn format_size(bytes: u64) -> String {
-    const KB: f64 = 1000.0;
-    const MB: f64 = KB * 1000.0;
-    const GB: f64 = MB * 1000.0;
-    let b = bytes as f64;
-    // Decimal units, matching Finder.
-    if b >= GB {
-        format!("{:.1} GB", b / GB)
-    } else if b >= MB {
-        format!("{:.1} MB", b / MB)
-    } else if b >= KB {
-        format!("{:.0} KB", b / KB)
-    } else {
-        format!("{} B", bytes)
-    }
+    walk(path, &mut 5_000)
 }
 
 #[cfg(test)]
@@ -366,7 +275,7 @@ mod tests {
         assert_eq!(staged.len(), 2);
         assert_eq!(staged[0].group_id, staged[1].group_id);
         assert_eq!(shelf.get_items()[0].original_path, a);
-        assert_eq!(shelf.get_items()[1].kind, "image");
+        assert_eq!(shelf.get_items()[1].original_path, b);
     }
 
     #[test]
@@ -416,7 +325,7 @@ mod tests {
         let snippet = touch(&drop_dir, "snippet.txt", "hello");
         let item = shelf.stage_file(&snippet).unwrap();
         assert!(item.owned);
-        assert!(shelf.remove_item(&item.id, true));
+        assert_eq!(shelf.remove_items(&[item.id], true), 1);
         assert!(!Path::new(&snippet).exists());
         assert!(!drop_dir.exists());
     }

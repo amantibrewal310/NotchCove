@@ -1,21 +1,15 @@
 import AppKit
 
 /// When a file drag opens the shelf (menu bar → Open Shelf While Dragging).
-public enum DragOpenMode: String, CaseIterable {
-    /// Like Dropzone/Yoink: the shelf appears the moment a file drag starts, so
-    /// you never have to push into the screen edge (which triggers Mission Control).
+enum DragOpenMode: String, Setting {
+    /// Opens without pushing into the screen edge, which triggers Mission Control.
     case dragStart
-    /// Only when the drag gets close to the notch.
     case nearNotch
 
     static let defaultsKey = "DragOpenMode"
+    static let defaultValue = DragOpenMode.dragStart
 
-    public static var current: DragOpenMode {
-        get { DragOpenMode(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .dragStart }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
-    }
-
-    public var title: String {
+    var title: String {
         switch self {
         case .dragStart: "As Soon as a Drag Starts"
         case .nearNotch: "Only Near the Notch"
@@ -24,19 +18,15 @@ public enum DragOpenMode: String, CaseIterable {
 }
 
 /// User-selectable shelf size (menu bar → Shelf Size).
-public enum ShelfSize: String, CaseIterable {
+enum ShelfSize: String, Setting {
     case compact, regular, large
 
     static let defaultsKey = "ShelfSize"
+    static let defaultValue = ShelfSize.regular
 
-    public static var current: ShelfSize {
-        get { ShelfSize(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .regular }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
-    }
+    var title: String { rawValue.capitalized }
 
-    public var title: String { rawValue.capitalized }
-
-    public var scale: CGFloat {
+    var scale: CGFloat {
         switch self {
         case .compact: 0.8
         case .regular: 1.0
@@ -46,33 +36,30 @@ public enum ShelfSize: String, CaseIterable {
 }
 
 /// Describes the notch (physical, or a virtual one drawn inside the menu bar).
-public struct NotchMetrics: Equatable {
-    public let screenFrame: CGRect
-    public let hasPhysicalNotch: Bool
-    public let notchWidth: CGFloat
-    public let notchHeight: CGFloat
+struct NotchMetrics: Equatable {
+    let screenFrame: CGRect
+    let hasPhysicalNotch: Bool
+    let notchWidth: CGFloat
+    let notchHeight: CGFloat
     /// From ShelfSize; scales the open shelf and its cards (the notch itself stays put).
-    public var scale: CGFloat = ShelfSize.current.scale
+    var scale: CGFloat = ShelfSize.current.scale
 
-    /// Size of the open shelf.
-    public var shelfWidth: CGFloat { (640 * scale).rounded() }
-    /// Card = thumbnail (scales) + two text lines and padding (fixed ~44 pt).
-    public var cardHeight: CGFloat { (54 * scale).rounded() + 44 }
-    /// Header, a 6 pt gap above the cards (room for the hover ×), the cards,
-    /// and 12 pt below — so cards are never clipped at any Shelf Size.
-    public var shelfHeight: CGFloat { headerHeight + 6 + cardHeight + 12 }
+    var shelfWidth: CGFloat { (640 * scale).rounded() }
+    /// Thumbnail (scales) plus two text lines and padding (fixed).
+    var cardHeight: CGFloat { (54 * scale).rounded() + 44 }
+    /// Header, a 6 pt gap for the hover ×, the cards, 12 pt below.
+    var shelfHeight: CGFloat { headerHeight + 6 + cardHeight + 12 }
+    /// Thumbnail size of a single-file card.
+    var cardThumbnailSize: CGFloat { (50 * scale).rounded() }
     /// The header row sits beside the notch cut-out, so it's at least as tall as the notch.
-    public var headerHeight: CGFloat { max(notchHeight, 28) }
+    var headerHeight: CGFloat { max(notchHeight, 28) }
     /// Transparent margin around the open shelf so its shadow isn't clipped.
-    public static let shadowMargin: CGFloat = 24
+    static let shadowMargin: CGFloat = 24
 
-    /// Collapsed width grows a little when the shelf has items, so the badge
-    /// peeks out on either side of the physical notch. A virtual notch has no
-    /// camera in the middle, so the badge simply sits inside it.
-    public func collapsedWidth(itemCount: Int) -> CGFloat {
+    /// Widens with items so the count badge peeks out beside a physical notch.
+    func collapsedWidth(itemCount: Int) -> CGFloat {
         guard itemCount > 0, hasPhysicalNotch else { return notchWidth }
-        // Each side must fit the count badge ("200" needs more room than "2"):
-        // ear (6) + inset (8) + badge + a gap before the camera housing (6).
+        // Per side: ear 6 + inset 8 + badge + gap before the camera 6.
         let digits = CGFloat(String(itemCount).count)
         let badge = max(16, digits * 6.5 + 9)
         let side = (20 + badge).rounded(.up)
@@ -80,11 +67,11 @@ public struct NotchMetrics: Equatable {
     }
 
     /// The screen that hosts the shelf: the primary display (the one with the menu bar).
-    public static var hostScreen: NSScreen? {
+    static var hostScreen: NSScreen? {
         NSScreen.screens.first ?? NSScreen.main
     }
 
-    public static func current(for screen: NSScreen? = hostScreen) -> NotchMetrics {
+    static func current(for screen: NSScreen? = hostScreen) -> NotchMetrics {
         guard let screen else {
             return NotchMetrics(screenFrame: .zero, hasPhysicalNotch: false, notchWidth: 180, notchHeight: 24)
         }
@@ -118,7 +105,7 @@ public struct NotchMetrics: Equatable {
     }
 
     /// Screen rect of a top-centred box of the given size.
-    public func topCenteredRect(width: CGFloat, height: CGFloat) -> NSRect {
+    func topCenteredRect(width: CGFloat, height: CGFloat) -> NSRect {
         NSRect(
             x: screenFrame.midX - width / 2,
             y: screenFrame.maxY - height,
@@ -127,16 +114,16 @@ public struct NotchMetrics: Equatable {
         )
     }
 
-    public func collapsedRect(itemCount: Int) -> NSRect {
+    func collapsedRect(itemCount: Int) -> NSRect {
         topCenteredRect(width: collapsedWidth(itemCount: itemCount), height: notchHeight)
     }
 
-    public var shelfRect: NSRect {
+    var shelfRect: NSRect {
         topCenteredRect(width: shelfWidth, height: shelfHeight)
     }
 
     /// Area where an incoming drag pulls the shelf open: a generous zone around the notch.
-    public var dragMagnetRect: NSRect {
+    var dragMagnetRect: NSRect {
         topCenteredRect(width: max(notchWidth + 240, 420), height: notchHeight + 70)
     }
 }

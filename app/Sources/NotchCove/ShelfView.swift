@@ -32,15 +32,13 @@ struct NotchShape: Shape {
 
 // MARK: - Root
 
-public struct NotchRootView: View {
+struct NotchRootView: View {
     @ObservedObject private var manager = NotchWindowManager.shared
-    @ObservedObject private var engine = CoveEngine.shared
-
-    public init() {}
 
     private var metrics: NotchMetrics { manager.metrics }
     private var expanded: Bool { manager.isExpanded }
     private var earRadius: CGFloat { expanded ? 14 : 6 }
+    private var shape: NotchShape { NotchShape(topRadius: earRadius, bottomRadius: expanded ? 24 : 10) }
 
     private var size: CGSize {
         expanded
@@ -48,25 +46,24 @@ public struct NotchRootView: View {
             : CGSize(width: metrics.collapsedWidth(itemCount: manager.collapsedCount), height: metrics.notchHeight)
     }
 
-    public var body: some View {
+    var body: some View {
         ZStack(alignment: .top) {
             ZStack(alignment: .top) {
                 if expanded {
                     ShelfContent()
-                        .padding(.horizontal, earRadius)
                         .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
                 } else {
                     CollapsedContent(count: manager.collapsedCount, splitAroundNotch: metrics.hasPhysicalNotch, theme: manager.theme)
-                        .padding(.horizontal, earRadius)
                         .transition(.opacity)
                 }
             }
+            .padding(.horizontal, earRadius)
             .frame(width: size.width, height: size.height, alignment: .top)
-            .clipShape(NotchShape(topRadius: earRadius, bottomRadius: expanded ? 24 : 10))
+            .clipShape(shape)
             // The shadow sits on a plain background shape, not on the content,
             // so scrolling doesn't force it to be recomputed every frame.
             .background(
-                NotchShape(topRadius: earRadius, bottomRadius: expanded ? 24 : 10)
+                shape
                     .fill(Color.black)
                     .shadow(color: .black.opacity(expanded ? 0.45 : 0), radius: 14, y: 6)
             )
@@ -88,10 +85,7 @@ private struct CollapsedContent: View {
         if count > 0 {
             HStack(spacing: 6) {
                 if !splitAroundNotch { Spacer(minLength: 0) }
-                Image(nsImage: Brand.glyph)
-                    .renderingMode(.template)
-                    .resizable()
-                    .frame(width: 14, height: 14)
+                BrandMark(size: 14)
                     .foregroundStyle(.white.opacity(0.9))
                 Spacer(minLength: 0).frame(maxWidth: splitAroundNotch ? .infinity : 0)
                 Text("\(count)")
@@ -170,9 +164,7 @@ private struct ShelfContent: View {
     }
 }
 
-/// Removal "poof", like Dropzone's: a small cloud of soft puffs bursts over
-/// the card and dissolves while the card fades. Only exists for the ~0.4 s
-/// the card takes to go, so nothing runs afterwards.
+/// Cloud of puffs that bursts over a card for the ~0.4 s it takes to be removed.
 private struct PoofCloud: View {
     let burst: Bool
     private static let puffs = 7
@@ -217,10 +209,7 @@ private struct ShelfHeader: View {
                 .buttonStyle(HeaderButtonStyle())
                 .accessibilityLabel("Back to shelf (Esc)")
             } else {
-                Image(nsImage: Brand.glyph)
-                    .renderingMode(.template)
-                    .resizable()
-                    .frame(width: 16, height: 16)
+                BrandMark(size: 16)
                     .foregroundStyle(theme.accent)
                     // Pop when something lands (SF Symbol bounce doesn't apply to a custom mark).
                     .id(manager.dropPulse)
@@ -263,6 +252,17 @@ private struct ShelfHeader: View {
         .foregroundStyle(.white)
         .padding(.horizontal, 12)
         .padding(.top, 2)
+    }
+}
+
+private struct BrandMark: View {
+    let size: CGFloat
+
+    var body: some View {
+        Image(nsImage: Brand.glyph)
+            .renderingMode(.template)
+            .resizable()
+            .frame(width: size, height: size)
     }
 }
 
@@ -374,8 +374,8 @@ private struct CardView: View {
                     .foregroundStyle(.white, theme.removeButtonFill)
                     .allowsHitTesting(false)
                     .offset(x: -1, y: 1)
-                .accessibilityLabel("Remove from Cove")
-                .transition(.opacity)
+                    .accessibilityLabel("Remove from Cove")
+                    .transition(.opacity)
             }
         }
         .animation(.easeOut(duration: 0.12), value: isHovered)

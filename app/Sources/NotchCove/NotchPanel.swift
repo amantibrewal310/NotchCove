@@ -1,0 +1,205 @@
+import AppKit
+import Quartz
+import SwiftUI
+
+// MARK: - NotchPanel
+
+final class NotchPanel: NSPanel {
+    init(contentRect: NSRect) {
+        super.init(
+            contentRect: contentRect,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        level = .statusBar + 8
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = false
+        isMovable = false
+        isReleasedWhenClosed = false
+        acceptsMouseMovedEvents = true
+        hidesOnDeactivate = false
+        animationBehavior = .none
+    }
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    /// Card that received the current mouse-down; gets the drags and mouse-up.
+    private weak var trackedCard: CardInteractionView.CardNSView?
+
+    /// Card clicks go straight to the card view: routed through SwiftUI's hosting
+    /// view, mouse-downs on embedded AppKit views were sometimes held back.
+    override func sendEvent(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown:
+            if let card = card(at: event) {
+                trackedCard = card
+                card.mouseDown(with: event)
+                return
+            }
+        case .leftMouseDragged:
+            if let card = trackedCard { card.mouseDragged(with: event); return }
+        case .leftMouseUp:
+            if let card = trackedCard {
+                trackedCard = nil
+                card.mouseUp(with: event)
+                return
+            }
+        case .scrollWheel:
+            MainActor.assumeIsolated { NotchWindowManager.shared.noteScrolling() }
+        case .rightMouseDown:
+            if let card = card(at: event) {
+                if let menu = card.menu(for: event) {
+                    NSMenu.popUpContextMenu(menu, with: event, for: card)
+                }
+                return
+            }
+        default:
+            break
+        }
+        super.sendEvent(event)
+    }
+
+    private func card(at event: NSEvent) -> CardInteractionView.CardNSView? {
+        guard let content = contentView else { return nil }
+        var view = content.hitTest(content.convert(event.locationInWindow, from: nil))
+        while let current = view {
+            if let card = current as? CardInteractionView.CardNSView { return card }
+            view = current.superview
+        }
+        return nil
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if !MainActor.assumeIsolated({ NotchWindowManager.shared.handleKey(event) }) {
+            super.keyDown(with: event)
+        }
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        MainActor.assumeIsolated { NotchWindowManager.shared.handleKey(event) }
+            || super.performKeyEquivalent(with: event)
+    }
+
+    // Quick Look responder-chain hooks.
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated { QuickLookController.shared.begin(panel) }
+    }
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated { QuickLookController.shared.end(panel) }
+    }
+}
+
+// MARK: - Hosting view (drop destination)
+
+final class CoveHostingView: NSHostingView<NotchRootView> {
+    private var manager: NotchWindowManager { MainActor.assumeIsolated { .shared } }
+
+    required init(rootView: NotchRootView) {
+        super.init(rootView: rootView)
+        registerForDraggedTypes(DropIngest.draggedTypes)
+    }
+
+    @MainActor required dynamic init?(coder: NSCoder) {
+        fatalError("init(coder:) not supported")
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // A tracking area on this small window, not a system-wide monitor, so
+    // pointer movement elsewhere costs nothing.
+    private var hoverArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    // Always call super: SwiftUI's own pointer tracking relies on these, and
+    // starving it stops clicks from reaching the cards.
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        if event.trackingArea === hoverArea { manager.pointerMoved(to: NSEvent.mouseLocation) }
+    }
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        manager.pointerMoved(to: NSEvent.mouseLocation)
+    }
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        if event.trackingArea === hoverArea { manager.pointerMoved(to: NSEvent.mouseLocation) }
+    }
+
+    /// Clicks on the transparent shadow margin fall through to nothing rather
+    /// than landing on invisible controls.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let window else { return super.hitTest(point) }
+        let screenPoint = window.convertPoint(toScreen: convert(point, to: nil))
+        return manager.interactiveRect.contains(screenPoint) ? super.hitTest(point) : nil
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if !manager.isExpanded {
+            manager.expand(.click)
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    private func screenPoint(_ info: NSDraggingInfo) -> NSPoint {
+        window?.convertPoint(toScreen: info.draggingLocation) ?? NSEvent.mouseLocation
+    }
+
+    /// Whether the current drag session carries anything we can take, read
+    /// once per session instead of on every draggingUpdated.
+    private var acceptCache: (session: Int, accepts: Bool)?
+
+    private func operation(for info: NSDraggingInfo) -> NSDragOperation {
+        // Ignore our own items being dragged back in.
+        if info.draggingSource is DragOutCoordinator { return [] }
+        if acceptCache?.session != info.draggingSequenceNumber {
+            acceptCache = (info.draggingSequenceNumber, DropIngest.canAccept(info.draggingPasteboard))
+        }
+        guard acceptCache?.accepts == true else { return [] }
+        return manager.dropHovered(at: screenPoint(info)) ? .copy : []
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        operation(for: sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        operation(for: sender)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        manager.dropExited()
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        !(sender.draggingSource is DragOutCoordinator)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let manager = self.manager
+        DropIngest.ingest(sender.draggingPasteboard) { count in
+            manager.didReceiveDrop(count: count)
+        }
+        return true
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        manager.externalDragFinished()
+    }
+}

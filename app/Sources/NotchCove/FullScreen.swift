@@ -1,13 +1,9 @@
 import AppKit
 
-/// Spots a full-screen Space on a display. Asked only when the Space or the
-/// frontmost app changes, never on a timer.
-///
-/// Window sizes can't tell: on notched Macs full-screen windows stop below the
-/// notch, exactly like a maximised window. So this asks the window server for
-/// the current Space's type, as tools like yabai and Hammerspoon do. It's a
-/// private call, looked up at runtime so a future macOS without it just
-/// reports "not full screen" instead of crashing.
+/// Spots a full-screen Space by asking the window server for the Space type
+/// (window sizes can't tell: on notched Macs full-screen windows stop below
+/// the notch). The private call is looked up at runtime, so if it's missing
+/// this reports "not full screen" instead of crashing.
 enum FullScreenDetector {
     private typealias ConnectionFn = @convention(c) () -> Int32
     private typealias SpacesFn = @convention(c) (Int32) -> Unmanaged<CFArray>?

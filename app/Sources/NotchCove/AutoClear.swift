@@ -1,10 +1,8 @@
 import AppKit
-import CCoveCore
 import Combine
-import Quartz
 
 /// How long items stay on the shelf before being cleared automatically.
-public enum AutoClear: Int, CaseIterable {
+enum AutoClear: Int, Setting {
     case oneHour = 3_600
     case twelveHours = 43_200
     case oneDay = 86_400
@@ -12,16 +10,9 @@ public enum AutoClear: Int, CaseIterable {
     case never = 0
 
     static let defaultsKey = "AutoClearSeconds"
+    static let defaultValue = AutoClear.twelveHours
 
-    public static var current: AutoClear {
-        get {
-            guard UserDefaults.standard.object(forKey: defaultsKey) != nil else { return .twelveHours }
-            return AutoClear(rawValue: UserDefaults.standard.integer(forKey: defaultsKey)) ?? .twelveHours
-        }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
-    }
-
-    public var title: String {
+    var title: String {
         switch self {
         case .oneHour: "After 1 Hour"
         case .twelveHours: "After 12 Hours"
@@ -32,9 +23,8 @@ public enum AutoClear: Int, CaseIterable {
     }
 }
 
-/// Clears expired items without polling: one timer is armed for the next
-/// expiry, and the shelf is also checked at launch and after the Mac wakes
-/// (timers don't advance while it sleeps).
+/// Clears expired items with one timer armed for the next expiry, plus a
+/// check at launch and on wake (timers don't advance during sleep).
 @MainActor
 final class AutoClearScheduler {
     static let shared = AutoClearScheduler()
@@ -59,37 +49,25 @@ final class AutoClearScheduler {
         run()
     }
 
-    /// Clears anything expired now, then arms the timer for the next item.
     func run() {
         let policy = AutoClear.current
-        guard policy != .never else {
-            timer?.invalidate()
-            return
-        }
-        // Don't pull items out from under an interaction; try again shortly.
-        if DragOutCoordinator.shared.isDragging || ItemActions.isSharing || QuickLookController.shared.isVisible {
-            arm(after: 60)
-            return
-        }
-        if cove_expire_older_than(UInt64(policy.rawValue)) > 0 {
-            CoveEngine.shared.refresh()
-            NotchWindowManager.shared.itemsRemoved()
+        if policy != .never {
+            // Don't pull items out from under an interaction; try again shortly.
+            if NotchWindowManager.shared.isBusy { return arm(after: 60) }
+            if CoveEngine.shared.expire(olderThan: policy.rawValue) > 0 {
+                NotchWindowManager.shared.itemsRemoved()
+            }
         }
         reschedule()
     }
 
     private func reschedule() {
         let policy = AutoClear.current
-        guard policy != .never else {
+        guard policy != .never, let next = CoveEngine.shared.nextExpiry(maxAge: policy.rawValue) else {
             timer?.invalidate()
             return
         }
-        let next = cove_next_expiry(UInt64(policy.rawValue))
-        guard next > 0 else {
-            timer?.invalidate()
-            return
-        }
-        arm(after: max(1, TimeInterval(next) - Date().timeIntervalSince1970 + 1))
+        arm(after: max(1, next.timeIntervalSinceNow + 1))
     }
 
     private func arm(after delay: TimeInterval) {

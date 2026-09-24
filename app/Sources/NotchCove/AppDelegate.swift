@@ -7,14 +7,8 @@ import ServiceManagement
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var hotKey: HotKey?
-    private var keepItemsMenuItem: NSMenuItem?
-    private var showCountMenuItem: NSMenuItem?
-    private var sizeMenuItems: [NSMenuItem] = []
-    private var autoClearMenuItems: [NSMenuItem] = []
-    private var dragModeMenuItems: [NSMenuItem] = []
-    private var screenshotMenuItems: [NSMenuItem] = []
-    private var themeMenuItems: [NSMenuItem] = []
-    private var launchAtLoginMenuItem: NSMenuItem?
+    /// Menu items with a checkmark, refreshed each time the menu opens.
+    private var checkedItems: [(item: NSMenuItem, state: () -> NSControl.StateValue)] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -35,202 +29,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let menu = NSMenu()
         menu.delegate = self
+        let manager = NotchWindowManager.shared
 
-        let toggle = NSMenuItem(title: "Show Shelf", action: #selector(toggleShelf), keyEquivalent: "c")
+        let toggle = ClosureMenuItem("Show Shelf", key: "c") { manager.toggleFromHotKey() }
         toggle.keyEquivalentModifierMask = [.control, .option]
-        toggle.target = self
         menu.addItem(toggle)
-
-        let inbox = NSMenuItem(title: "Open Cove Inbox Folder", action: #selector(openInbox), keyEquivalent: "")
-        inbox.target = self
-        menu.addItem(inbox)
-
+        menu.addItem(ClosureMenuItem("Open Cove Inbox Folder") { NSWorkspace.shared.open(CoveEngine.shared.inboxDirectory) })
         menu.addItem(.separator())
 
-        let themeItem = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
-        let themeMenu = NSMenu()
-        for choice in ThemeChoice.allCases {
-            let entry = NSMenuItem(title: choice.title, action: #selector(chooseTheme(_:)), keyEquivalent: "")
-            entry.target = self
-            entry.representedObject = choice.rawValue
-            themeMenu.addItem(entry)
+        addChoices("Theme", to: menu) { manager.setTheme($0) }
+        addChoices("Shelf Size", to: menu) { manager.setShelfSize($0) }
+        addChoices("Open Shelf While Dragging", to: menu) { DragOpenMode.current = $0 }
+        addChoices("Auto-Clear Items", to: menu, separatorBefore: AutoClear.never) { AutoClearScheduler.shared.setPolicy($0) }
+        addChoices("Screenshots", to: menu, separatorBefore: ScreenshotMode.keepFile) { ScreenshotWatcher.shared.setMode($0) }
+
+        addToggle("Show Item Count Beside Notch", to: menu, isOn: { manager.showsCountBesideNotch }) {
+            manager.setShowsCountBesideNotch(!manager.showsCountBesideNotch)
         }
-        themeItem.submenu = themeMenu
-        menu.addItem(themeItem)
-        themeMenuItems = themeMenu.items
-
-        let sizeItem = NSMenuItem(title: "Shelf Size", action: nil, keyEquivalent: "")
-        let sizeMenu = NSMenu()
-        for size in ShelfSize.allCases {
-            let entry = NSMenuItem(title: size.title, action: #selector(chooseShelfSize(_:)), keyEquivalent: "")
-            entry.target = self
-            entry.representedObject = size.rawValue
-            sizeMenu.addItem(entry)
+        addToggle("Keep Items After Dragging Out", to: menu, isOn: { DragOutCoordinator.keepItems }) {
+            DragOutCoordinator.keepItems.toggle()
         }
-        sizeItem.submenu = sizeMenu
-        menu.addItem(sizeItem)
-        sizeMenuItems = sizeMenu.items
-
-        let dragItem = NSMenuItem(title: "Open Shelf While Dragging", action: nil, keyEquivalent: "")
-        let dragMenu = NSMenu()
-        for mode in DragOpenMode.allCases {
-            let entry = NSMenuItem(title: mode.title, action: #selector(chooseDragMode(_:)), keyEquivalent: "")
-            entry.target = self
-            entry.representedObject = mode.rawValue
-            dragMenu.addItem(entry)
-        }
-        dragItem.submenu = dragMenu
-        menu.addItem(dragItem)
-        dragModeMenuItems = dragMenu.items
-
-        let clearItem = NSMenuItem(title: "Auto-Clear Items", action: nil, keyEquivalent: "")
-        let clearMenu = NSMenu()
-        for policy in AutoClear.allCases {
-            if policy == .never { clearMenu.addItem(.separator()) }
-            let entry = NSMenuItem(title: policy.title, action: #selector(chooseAutoClear(_:)), keyEquivalent: "")
-            entry.target = self
-            entry.tag = policy.rawValue
-            clearMenu.addItem(entry)
-        }
-        clearItem.submenu = clearMenu
-        menu.addItem(clearItem)
-        autoClearMenuItems = clearMenu.items.filter { !$0.isSeparatorItem }
-
-        let shotItem = NSMenuItem(title: "Screenshots", action: nil, keyEquivalent: "")
-        let shotMenu = NSMenu()
-        for mode in ScreenshotMode.allCases {
-            if mode == .keepFile { shotMenu.addItem(.separator()) }
-            let entry = NSMenuItem(title: mode.title, action: #selector(chooseScreenshotMode(_:)), keyEquivalent: "")
-            entry.target = self
-            entry.representedObject = mode.rawValue
-            shotMenu.addItem(entry)
-        }
-        shotItem.submenu = shotMenu
-        menu.addItem(shotItem)
-        screenshotMenuItems = shotMenu.items.filter { !$0.isSeparatorItem }
-
-        let count = NSMenuItem(title: "Show Item Count Beside Notch", action: #selector(toggleShowCount), keyEquivalent: "")
-        count.target = self
-        menu.addItem(count)
-        showCountMenuItem = count
-
-        let keep = NSMenuItem(title: "Keep Items After Dragging Out", action: #selector(toggleKeepItems), keyEquivalent: "")
-        keep.target = self
-        menu.addItem(keep)
-        keepItemsMenuItem = keep
-
-        let clear = NSMenuItem(title: "Clear Shelf", action: #selector(clearFiles), keyEquivalent: "")
-        clear.target = self
-        menu.addItem(clear)
-
+        menu.addItem(ClosureMenuItem("Clear Shelf") { CoveEngine.shared.clearAll() })
         menu.addItem(.separator())
 
-        let login = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-        login.target = self
+        let login = ClosureMenuItem("Launch at Login") { Self.toggleLaunchAtLogin() }
         menu.addItem(login)
-        launchAtLoginMenuItem = login
-
+        checkedItems.append((login, {
+            switch SMAppService.mainApp.status {
+            case .enabled: .on
+            case .requiresApproval: .mixed
+            default: .off
+            }
+        }))
         menu.addItem(.separator())
 
-        let quit = NSMenuItem(title: "Quit NotchCove", action: #selector(quitApp), keyEquivalent: "q")
-        quit.target = self
-        menu.addItem(quit)
+        menu.addItem(ClosureMenuItem("Quit NotchCove", key: "q") { NSApp.terminate(nil) })
 
         item.menu = menu
         statusItem = item
     }
 
+    private func addChoices<T: Setting>(
+        _ title: String, to menu: NSMenu, separatorBefore: T? = nil, select: @escaping (T) -> Void
+    ) {
+        let submenu = NSMenu()
+        for choice in T.allCases {
+            if choice == separatorBefore { submenu.addItem(.separator()) }
+            let entry = ClosureMenuItem(choice.title) { select(choice) }
+            submenu.addItem(entry)
+            checkedItems.append((entry, { T.current == choice ? .on : .off }))
+        }
+        let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        parent.submenu = submenu
+        menu.addItem(parent)
+    }
+
+    private func addToggle(_ title: String, to menu: NSMenu, isOn: @escaping () -> Bool, toggle: @escaping () -> Void) {
+        let item = ClosureMenuItem(title, handler: toggle)
+        menu.addItem(item)
+        checkedItems.append((item, { isOn() ? .on : .off }))
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
-        showCountMenuItem?.state = NotchWindowManager.shared.showsCountBesideNotch ? .on : .off
-        keepItemsMenuItem?.state = UserDefaults.standard.bool(forKey: DragOutCoordinator.keepItemsKey) ? .on : .off
-        for item in dragModeMenuItems {
-            item.state = item.representedObject as? String == DragOpenMode.current.rawValue ? .on : .off
-        }
-        for item in autoClearMenuItems {
-            item.state = item.tag == AutoClear.current.rawValue ? .on : .off
-        }
-        for item in themeMenuItems {
-            item.state = item.representedObject as? String == ThemeChoice.current.rawValue ? .on : .off
-        }
-        for item in screenshotMenuItems {
-            item.state = item.representedObject as? String == ScreenshotMode.current.rawValue ? .on : .off
-        }
-        launchAtLoginMenuItem?.state = switch SMAppService.mainApp.status {
-        case .enabled: .on
-        case .requiresApproval: .mixed
-        default: .off
-        }
-        // Cheap way to notice a changed screenshot folder without watching prefs.
+        for (item, state) in checkedItems { item.state = state() }
+        // Picks up a changed screenshot folder even if no prefs notification arrived.
         ScreenshotWatcher.shared.apply()
-        for item in sizeMenuItems {
-            item.state = item.representedObject as? String == ShelfSize.current.rawValue ? .on : .off
-        }
     }
 
-    @objc private func toggleShelf() {
-        NotchWindowManager.shared.toggleFromHotKey()
-    }
-
-    @objc private func chooseDragMode(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let mode = DragOpenMode(rawValue: raw) else { return }
-        DragOpenMode.current = mode
-    }
-
-    @objc private func chooseAutoClear(_ sender: NSMenuItem) {
-        guard let policy = AutoClear(rawValue: sender.tag) else { return }
-        AutoClearScheduler.shared.setPolicy(policy)
-    }
-
-    @objc private func chooseShelfSize(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let size = ShelfSize(rawValue: raw) else { return }
-        NotchWindowManager.shared.setShelfSize(size)
-    }
-
-    @objc private func chooseTheme(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let choice = ThemeChoice(rawValue: raw) else { return }
-        NotchWindowManager.shared.setTheme(choice)
-    }
-
-    @objc private func chooseScreenshotMode(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let mode = ScreenshotMode(rawValue: raw) else { return }
-        ScreenshotWatcher.shared.setMode(mode)
-    }
-
-    @objc private func toggleLaunchAtLogin() {
+    private static func toggleLaunchAtLogin() {
         let service = SMAppService.mainApp
         do {
-            if service.status == .enabled {
-                try service.unregister()
-            } else {
-                try service.register()
-            }
+            if service.status == .enabled { try service.unregister() } else { try service.register() }
         } catch {
             clog("[Login] \(error)")
         }
         // macOS may want the user to allow it in System Settings › Login Items.
         if service.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
-    }
-
-    @objc private func openInbox() {
-        NSWorkspace.shared.open(CoveEngine.shared.inboxDirectory)
-    }
-
-    @objc private func toggleShowCount() {
-        let manager = NotchWindowManager.shared
-        manager.setShowsCountBesideNotch(!manager.showsCountBesideNotch)
-    }
-
-    @objc private func toggleKeepItems() {
-        let defaults = UserDefaults.standard
-        defaults.set(!defaults.bool(forKey: DragOutCoordinator.keepItemsKey), forKey: DragOutCoordinator.keepItemsKey)
-    }
-
-    @objc private func clearFiles() {
-        CoveEngine.shared.clearAll()
-    }
-
-    @objc private func quitApp() {
-        NSApp.terminate(nil)
     }
 
     // Quick Look looks up the responder chain, which ends at the app delegate.

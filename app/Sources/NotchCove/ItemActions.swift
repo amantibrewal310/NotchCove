@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Quartz
 
 // MARK: - Quick Look
@@ -48,7 +49,7 @@ final class QuickLookController: NSObject, QLPreviewPanelDataSource, QLPreviewPa
 
     nonisolated func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
         // Space or Escape closes, just like Finder.
-        guard event.type == .keyDown, event.keyCode == 49 || event.keyCode == 53 else { return false }
+        guard event.type == .keyDown, [kVK_Space, kVK_Escape].contains(Int(event.keyCode)) else { return false }
         MainActor.assumeIsolated { panel.orderOut(nil) }
         return true
     }

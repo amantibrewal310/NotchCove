@@ -9,13 +9,18 @@ final class DragOutCoordinator: NSObject, NSDraggingSource {
     private var draggedItems: [StagedItem] = []
     private(set) var isDragging = false
 
-    /// Keep items on the shelf after they're dropped somewhere (Dropzone's "Keep in Drop Bar").
-    static let keepItemsKey = "keepItemsAfterDragOut"
+    /// Keep items on the shelf after they're dropped somewhere.
+    static var keepItems: Bool {
+        get { UserDefaults.standard.bool(forKey: "keepItemsAfterDragOut") }
+        set { UserDefaults.standard.set(newValue, forKey: "keepItemsAfterDragOut") }
+    }
 
     func beginDrag(items: [StagedItem], from view: NSView, event: NSEvent) {
         guard !items.isEmpty else { return }
         let start = view.convert(event.locationInWindow, from: nil)
         let iconSize: CGFloat = 56
+        // The size cards cache thumbnails at, so the drag images are cache hits.
+        let thumbSize = NotchWindowManager.shared.metrics.cardThumbnailSize
 
         let dragItems: [NSDraggingItem] = items.enumerated().map { index, item in
             let dragItem = NSDraggingItem(pasteboardWriter: item.url as NSURL)
@@ -27,7 +32,7 @@ final class DragOutCoordinator: NSObject, NSDraggingSource {
                 width: iconSize,
                 height: iconSize
             )
-            dragItem.setDraggingFrame(frame, contents: ThumbnailCache.shared.image(for: item.url, size: 48))
+            dragItem.setDraggingFrame(frame, contents: ThumbnailCache.shared.image(for: item.url, size: thumbSize))
             return dragItem
         }
 
@@ -45,9 +50,7 @@ final class DragOutCoordinator: NSObject, NSDraggingSource {
     ) -> NSDragOperation {
         MainActor.assumeIsolated {
             guard context == .outsideApplication else { return [] }
-            // Your own files are copied by default so originals never move by
-            // accident. Hold ⌘ to move them instead. NotchCove's own inbox files
-            // (snippets, archives, received images) can simply be moved out.
+            // User files copy unless ⌘ is held; NotchCove's own inbox files may move.
             if NSEvent.modifierFlags.contains(.command) { return .move }
             let allOwned = draggedItems.allSatisfy(\.owned)
             return allOwned ? [.copy, .move] : .copy
@@ -73,7 +76,7 @@ final class DragOutCoordinator: NSObject, NSDraggingSource {
             if operation.contains(.move) {
                 // The file now lives elsewhere; forget it without deleting anything.
                 CoveEngine.shared.remove(ids: items.map(\.id), deleteOwned: false)
-            } else if operation != [] && !UserDefaults.standard.bool(forKey: Self.keepItemsKey) {
+            } else if operation != [] && !Self.keepItems {
                 CoveEngine.shared.remove(ids: items.map(\.id))
             }
             CoveEngine.shared.pruneMissing()
@@ -109,6 +112,7 @@ struct CardInteractionView: NSViewRepresentable {
         }
         private var mouseDownEvent: NSEvent?
         private var dragStarted = false
+        private var mouseDownOnRemove = false
         private var trackingArea: NSTrackingArea?
 
         private var manager: NotchWindowManager { .shared }
@@ -163,8 +167,6 @@ struct CardInteractionView: NSViewRepresentable {
             return removeButtonRect.contains(convert(event.locationInWindow, from: nil))
         }
 
-        private var mouseDownOnRemove = false
-
         override func mouseDown(with event: NSEvent) {
             mouseDownEvent = event
             dragStarted = false
@@ -178,7 +180,7 @@ struct CardInteractionView: NSViewRepresentable {
             guard hypot(b.x - a.x, b.y - a.y) > 3 else { return }
             dragStarted = true
             // Dragging a selected card drags the whole selection.
-            if !manager.selection.contains(card.id) { manager.selection = [card.id] }
+            selectIfNeeded(card)
             DragOutCoordinator.shared.beginDrag(items: manager.selectedItems, from: self, event: down)
         }
 
@@ -197,8 +199,7 @@ struct CardInteractionView: NSViewRepresentable {
             }
             let flags = event.modifierFlags
             if flags.contains(.command) {
-                if manager.selection.contains(card.id) { manager.selection.remove(card.id) }
-                else { manager.selection.insert(card.id) }
+                manager.selection.formSymmetricDifference([card.id])
             } else if flags.contains(.shift) {
                 manager.extendSelection(to: card.id)
             } else {
@@ -208,9 +209,13 @@ struct CardInteractionView: NSViewRepresentable {
 
         override func menu(for event: NSEvent) -> NSMenu? {
             guard let card else { return nil }
-            if !manager.selection.contains(card.id) { manager.selection = [card.id] }
+            selectIfNeeded(card)
             let stack = manager.selection.count == 1 ? card : nil
             return ItemActions.menu(for: manager.selectedItems, stack: stack, anchor: self)
+        }
+
+        private func selectIfNeeded(_ card: ShelfStack) {
+            if !manager.selection.contains(card.id) { manager.selection = [card.id] }
         }
     }
 }

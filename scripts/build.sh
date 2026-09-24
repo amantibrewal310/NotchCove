@@ -29,15 +29,11 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 rm -rf "$APP_BUNDLE"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
-# Copy binary
 cp "$PROJECT_ROOT/app/.build/release/NotchCove" "$MACOS_DIR/NotchCove"
-chmod +x "$MACOS_DIR/NotchCove"
-# Drop the symbol table; keeps the bundle small without affecting behaviour
 strip "$MACOS_DIR/NotchCove"
 
 cp "$PROJECT_ROOT/app/Resources/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 
-# Generate Info.plist
 cat << EOF > "$CONTENTS_DIR/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

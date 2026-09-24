@@ -1,4 +1,3 @@
 #include "cove_core.h"
 
-// Empty translation unit to satisfy SPM C target requirements.
-// The actual symbols are defined in libcove_core.a from the Rust core crate.
+// Empty unit for SPM; the symbols come from the Rust libcove_core.a.

@@ -3,9 +3,7 @@ import SwiftUI
 
 /// The NotchCove mark, shared by the menu bar, the notch and the shelf header.
 enum Brand {
-    /// Logo C's stepped stack under the notch, drawn as a template image so
-    /// it takes the tint of wherever it's shown (menu bar, shelf, notch). Coordinates are the logo's
-    /// 20-unit grid (y down), scaled to 18pt.
+    /// Template image on the logo's 20-unit grid (y down), drawn at 18 pt.
     static let glyph: NSImage = {
         let image = NSImage(size: NSSize(width: 18, height: 18), flipped: true) { rect in
             let transform = NSAffineTransform()
@@ -36,23 +34,13 @@ enum Brand {
 }
 
 /// The shelf's colour themes. The shelf body stays black in all of them.
-public enum ThemeChoice: String, CaseIterable {
+enum ThemeChoice: String, Setting {
     case graphite, lantern, signal
 
     static let defaultsKey = "Theme"
+    static let defaultValue = ThemeChoice.lantern
 
-    public static var current: ThemeChoice {
-        get { ThemeChoice(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .lantern }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
-    }
-
-    public var title: String {
-        switch self {
-        case .graphite: "Graphite"
-        case .lantern: "Lantern"
-        case .signal: "Signal"
-        }
-    }
+    var title: String { rawValue.capitalized }
 
     var theme: ShelfTheme {
         switch self {
@@ -88,7 +76,7 @@ struct ShelfTheme: Equatable {
     var headerTitleTracking: CGFloat
     var headerCountColor: Color
 
-    /// Closest to the original look: system blue, a ring around the selection, dashed drop zone.
+    /// System blue, a ring around the selection, dashed drop zone.
     static let graphite: ShelfTheme = {
         let accent = Color(hex: 0x0A84FF)
         return ShelfTheme(

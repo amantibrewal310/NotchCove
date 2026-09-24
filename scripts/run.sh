@@ -3,7 +3,6 @@ set -e
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Kill any existing instance
 pkill -x NotchCove 2>/dev/null || true
 
 # Always rebuild (incremental, fast) so a stale bundle is never launched

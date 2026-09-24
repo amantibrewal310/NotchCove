@@ -1,22 +1,16 @@
 import AppKit
 
 /// What happens to a new screenshot.
-public enum ScreenshotMode: String, CaseIterable {
+enum ScreenshotMode: String, Setting {
     case off
-    /// Screenshot stays where macOS saved it; the shelf just points to it.
     case keepFile
-    /// Screenshot moves into the Cove Inbox, keeping the Desktop clean. It's
-    /// removed with the shelf item (or by auto-clear) unless you drag it out.
+    /// Moves into the Cove Inbox; deleted with the shelf item unless dragged out.
     case moveToShelf
 
     static let defaultsKey = "ScreenshotMode"
+    static let defaultValue = ScreenshotMode.off
 
-    public static var current: ScreenshotMode {
-        get { ScreenshotMode(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .off }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
-    }
-
-    public var title: String {
+    var title: String {
         switch self {
         case .off: "Don't Add to Shelf"
         case .keepFile: "Add to Shelf, Keep Saved File"
@@ -25,10 +19,9 @@ public enum ScreenshotMode: String, CaseIterable {
     }
 }
 
-/// Adds new screenshots to the shelf. Watches only the folder macOS saves
-/// screenshots to, with a kernel event source (no polling), and recognises
-/// screenshots by the metadata attribute screencapture writes, so it works
-/// in every language and ignores other files landing on the Desktop.
+/// Adds new screenshots to the shelf. Watches the screenshot folder with a
+/// kernel event source and matches files by screencapture's metadata
+/// attribute, so it works in every language.
 @MainActor
 final class ScreenshotWatcher {
     static let shared = ScreenshotWatcher()
@@ -104,17 +97,17 @@ final class ScreenshotWatcher {
             at: folder, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]
         ) else { return }
 
-        let fresh = files.filter { url in
+        let fresh = files.compactMap { url -> (url: URL, created: Date)? in
             guard let values = try? url.resourceValues(forKeys: Set(keys)),
                   values.isRegularFile == true,
                   let created = values.creationDate, created >= startedAt,
-                  !seen.contains(url.path) else { return false }
-            return Self.isScreenshot(url)
+                  !seen.contains(url.path), Self.isScreenshot(url) else { return nil }
+            return (url, created)
         }
-        .sorted { ($0.creationDateValue ?? .distantPast) < ($1.creationDateValue ?? .distantPast) }
+        .sorted { $0.created < $1.created }
         guard !fresh.isEmpty else { return }
 
-        for url in fresh {
+        for (url, _) in fresh {
             seen.insert(url.path)
             var staged = url
             if ScreenshotMode.current == .moveToShelf {
@@ -127,14 +120,13 @@ final class ScreenshotWatcher {
         NotchWindowManager.shared.peek()
     }
 
-    /// screencapture tags its files with kMDItemIsScreenCapture.
     private static func isScreenshot(_ url: URL) -> Bool {
         getxattr(url.path, "com.apple.metadata:kMDItemIsScreenCapture", nil, 0, 0, 0) >= 0
     }
 
     /// Where macOS saves screenshots (⌘⇧5 › Options › Save to); Desktop by default.
     static var screenshotFolder: URL {
-        let desktop = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
+        let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
         let domain = "com.apple.screencapture" as CFString
         CFPreferencesAppSynchronize(domain)  // pick up changes made since launch
         guard let location = CFPreferencesCopyAppValue("location" as CFString, domain) as? String else {
@@ -147,8 +139,4 @@ final class ScreenshotWatcher {
         }
         return URL(fileURLWithPath: path, isDirectory: true)
     }
-}
-
-private extension URL {
-    var creationDateValue: Date? { try? resourceValues(forKeys: [.creationDateKey]).creationDate }
 }

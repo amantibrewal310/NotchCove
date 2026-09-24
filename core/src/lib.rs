@@ -1,7 +1,6 @@
 // C-ABI entry points take raw pointers from Swift by design.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-
 pub mod actions;
 pub mod shelf;
 
@@ -37,18 +36,21 @@ fn to_c_string(s: String) -> *mut c_char {
         .unwrap_or(std::ptr::null_mut())
 }
 
+fn path_to_c(path: &Path) -> *mut c_char {
+    to_c_string(path.to_string_lossy().into_owned())
+}
+
 fn to_c_json<T: serde::Serialize>(value: &T) -> *mut c_char {
     serde_json::to_string(value)
         .map(to_c_string)
         .unwrap_or(std::ptr::null_mut())
 }
 
-fn parse_paths(ptr: *const c_char) -> Option<Vec<String>> {
+fn parse_strings(ptr: *const c_char) -> Option<Vec<String>> {
     serde_json::from_str(read_str(ptr)?).ok()
 }
 
-/// Initializes the shelf, persisting to `storage_dir` (may be null for an
-/// in-memory shelf). Safe to call more than once; later calls are ignored.
+/// `storage_dir` may be null for an in-memory shelf.
 #[no_mangle]
 pub extern "C" fn cove_init(storage_dir: *const c_char) {
     let mut guard = SHELF.lock().unwrap_or_else(|e| e.into_inner());
@@ -63,7 +65,7 @@ pub extern "C" fn cove_init(storage_dir: *const c_char) {
 /// Stages a JSON array of paths as one stack. Returns the staged items as JSON.
 #[no_mangle]
 pub extern "C" fn cove_stage_files(paths_json: *const c_char) -> *mut c_char {
-    let Some(paths) = parse_paths(paths_json) else {
+    let Some(paths) = parse_strings(paths_json) else {
         return std::ptr::null_mut();
     };
     match with_shelf(|shelf| shelf.stage_files(&paths)) {
@@ -80,19 +82,12 @@ pub extern "C" fn cove_get_staged_files() -> *mut c_char {
     with_shelf(|shelf| to_c_json(&shelf.get_items()))
 }
 
+/// Removes a JSON array of item ids. Returns how many were removed.
 #[no_mangle]
-pub extern "C" fn cove_remove_item(c_id: *const c_char, delete_owned: bool) -> bool {
-    match read_str(c_id) {
-        Some(id) => with_shelf(|shelf| shelf.remove_item(id, delete_owned)),
-        None => false,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn cove_remove_group(c_group_id: *const c_char) -> bool {
-    match read_str(c_group_id) {
-        Some(id) => with_shelf(|shelf| shelf.remove_group(id)),
-        None => false,
+pub extern "C" fn cove_remove_items(ids_json: *const c_char, delete_owned: bool) -> u32 {
+    match parse_strings(ids_json) {
+        Some(ids) => with_shelf(|shelf| shelf.remove_items(&ids, delete_owned) as u32),
+        None => 0,
     }
 }
 
@@ -130,21 +125,18 @@ pub extern "C" fn cove_next_expiry(max_age_secs: u64) -> u64 {
 /// Directory where NotchCove stores files it creates (snippets, archives…).
 #[no_mangle]
 pub extern "C" fn cove_inbox_dir() -> *mut c_char {
-    match with_shelf(|shelf| shelf.inbox_dir()) {
-        Some(dir) => to_c_string(dir.to_string_lossy().to_string()),
-        None => std::ptr::null_mut(),
-    }
+    with_shelf(|shelf| shelf.inbox_dir()).map_or(std::ptr::null_mut(), |dir| path_to_c(&dir))
 }
 
 /// Zips a JSON array of paths into `out_dir`. Blocking; call off the main
 /// thread. Returns the archive path, or null on failure.
 #[no_mangle]
 pub extern "C" fn cove_zip(paths_json: *const c_char, out_dir: *const c_char) -> *mut c_char {
-    let (Some(paths), Some(out)) = (parse_paths(paths_json), read_str(out_dir)) else {
+    let (Some(paths), Some(out)) = (parse_strings(paths_json), read_str(out_dir)) else {
         return std::ptr::null_mut();
     };
     match actions::zip_paths(&paths, Path::new(out)) {
-        Ok(path) => to_c_string(path.to_string_lossy().to_string()),
+        Ok(path) => path_to_c(&path),
         Err(err) => {
             eprintln!("[NotchCove Core] Zip failed: {}", err);
             std::ptr::null_mut()

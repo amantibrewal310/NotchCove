@@ -2,9 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Compresses `paths` into a zip inside `out_dir`, mirroring Finder's
-/// "Compress" naming: `<name>.zip` for one item, `Archive.zip` for several.
-/// Uses `ditto` so resource forks and extended attributes survive.
+/// Finder-style naming (`<name>.zip` or `Archive.zip`); `ditto` keeps resource forks and xattrs.
 pub fn zip_paths(paths: &[String], out_dir: &Path) -> Result<PathBuf, String> {
     let sources: Vec<&Path> = paths.iter().map(Path::new).filter(|p| p.exists()).collect();
     if sources.is_empty() {

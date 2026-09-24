@@ -59,5 +59,8 @@ else
     echo "ℹ️  pngquant not found (brew install pngquant); writing an uncompressed icon"
     iconutil -c icns "$ICONSET" -o "$OUT"
 fi
+# README logo (512 px, shown at 128 pt)
+cp "$ICONSET/icon_256x256@2x.png" "$PROJECT_ROOT/docs/logo.png"
+
 rm -rf "$WORK"
-echo "✨ app/Resources/AppIcon.icns"
+echo "✨ app/Resources/AppIcon.icns, docs/logo.png"

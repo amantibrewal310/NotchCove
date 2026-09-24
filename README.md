@@ -1,6 +1,10 @@
-# 🏔️ NotchCove
+<p align="center">
+  <img src="docs/logo.png" width="128" height="128" alt="NotchCove icon">
+</p>
 
-> A lightweight, blazing-fast macOS companion that turns your notch into a sheltered harbor for your active files and tools.
+<h1 align="center">NotchCove</h1>
+
+<p align="center">A lightweight, blazing-fast macOS companion that turns your notch into a sheltered harbor for your active files and tools.</p>
 
 Built with a **Rust core engine** for high-performance file management and temporary staging, paired with a **Swift/SwiftUI native shell** for 120Hz ProMotion spring animations and frosted glass materials.
 

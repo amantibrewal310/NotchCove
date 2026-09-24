@@ -34,19 +34,25 @@ done
 
 OUT="$PROJECT_ROOT/app/Resources/AppIcon.icns"
 if command -v pngquant >/dev/null 2>&1; then
-    # Shrink the PNGs (visually identical), then pack them as-is: iconutil
-    # would re-encode them and undo most of the saving.
+    # iconutil writes 16 and 32 px in the ARGB format macOS expects there
+    # (it misreads PNGs at 16 px); keep those, and pack the larger sizes as
+    # compressed PNGs as-is, since iconutil would re-encode them and undo the saving.
+    iconutil -c icns "$ICONSET" -o "$WORK/reference.icns"
     pngquant --quality 80-98 --speed 1 --strip --force --ext .png "$ICONSET"/*.png
-    python3 - "$ICONSET" "$OUT" <<'PY'
+    python3 - "$ICONSET" "$WORK/reference.icns" "$OUT" <<'PY'
 import struct, sys
-iconset, out = sys.argv[1], sys.argv[2]
-types = [("icp4", "16x16"), ("ic11", "16x16@2x"), ("icp5", "32x32"), ("ic12", "32x32@2x"),
-         ("ic07", "128x128"), ("ic13", "128x128@2x"), ("ic08", "256x256"), ("ic14", "256x256@2x"),
-         ("ic09", "512x512"), ("ic10", "512x512@2x")]
-body = b""
-for code, name in types:
-    data = open(f"{iconset}/icon_{name}.png", "rb").read()
-    body += code.encode() + struct.pack(">I", len(data) + 8) + data
+iconset, reference, out = sys.argv[1], sys.argv[2], sys.argv[3]
+data = open(reference, "rb").read()
+chunks, i = {}, 8
+while i < len(data):
+    code, length = data[i:i + 4].decode(), struct.unpack(">I", data[i + 4:i + 8])[0]
+    chunks[code] = data[i:i + length]
+    i += length
+body = chunks["ic04"] + chunks["ic05"]
+for code, name in [("ic11", "16x16@2x"), ("ic12", "32x32@2x"), ("ic07", "128x128"), ("ic13", "128x128@2x"),
+                   ("ic08", "256x256"), ("ic14", "256x256@2x"), ("ic09", "512x512"), ("ic10", "512x512@2x")]:
+    png = open(f"{iconset}/icon_{name}.png", "rb").read()
+    body += code.encode() + struct.pack(">I", len(png) + 8) + png
 open(out, "wb").write(b"icns" + struct.pack(">I", len(body) + 8) + body)
 PY
 else

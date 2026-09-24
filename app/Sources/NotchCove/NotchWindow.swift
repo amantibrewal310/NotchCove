@@ -309,6 +309,53 @@ public final class NotchWindowManager: NSObject, ObservableObject {
 
     public var isSticky: Bool { openReason == .click || openReason == .hotKey }
 
+    /// Show the item count beside the closed notch.
+    static let showCountKey = "ShowCountBesideNotch"
+    @Published private(set) var showsCountBesideNotch =
+        UserDefaults.standard.object(forKey: showCountKey) as? Bool ?? true
+
+    func setShowsCountBesideNotch(_ show: Bool) {
+        UserDefaults.standard.set(show, forKey: Self.showCountKey)
+        showsCountBesideNotch = show
+        if !isExpanded { applyFrame(animatedShrink: false) }
+    }
+
+    /// Cards being removed, by id: false while the poof is drawn small, true once it bursts.
+    @Published private(set) var poofs: [String: Bool] = [:]
+
+    /// Removes `items` from the shelf, playing a poof over their cards first
+    /// when the shelf is open (the removal lands once the poof has played).
+    func poofThenRemove(_ items: [StagedItem], clearAll: Bool = false) {
+        let itemIds = Set(items.map(\.id))
+        let cardIds = isExpanded
+            ? displayedCards.filter { $0.items.contains { itemIds.contains($0.id) } }.map(\.id)
+            : []
+        let finish = { [weak self] in
+            if clearAll { CoveEngine.shared.clearAll() } else { CoveEngine.shared.remove(ids: Array(itemIds)) }
+            self?.itemsRemoved()
+        }
+        guard !cardIds.isEmpty else { return finish() }
+
+        for id in cardIds { poofs[id] = false }
+        DispatchQueue.main.async { [weak self] in
+            withAnimation(.easeOut(duration: 0.4)) {
+                for id in cardIds where self?.poofs[id] != nil { self?.poofs[id] = true }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            for id in cardIds { self?.poofs[id] = nil }
+            finish()
+        }
+    }
+
+    /// Items the closed notch shows a count for: none when the count is off, or
+    /// in full screen, where the plain notch blends into the black top strip.
+    var collapsedCount: Int { showsCountBesideNotch && !fullScreenActive ? engine.items.count : 0 }
+
+    /// A full-screen app is showing on the notch's display.
+    @Published private(set) var fullScreenActive = false
+    private var fullScreenChecks: [DispatchWorkItem] = []
+
     private var panel: NotchPanel?
     private var hostingView: CoveHostingView?
     private var monitors: [Any] = []
@@ -374,6 +421,14 @@ public final class NotchWindowManager: NSObject, ObservableObject {
             }
             .store(in: &cancellables)
 
+        // Space switches and app switches are when full screen starts or ends.
+        for name in [NSWorkspace.activeSpaceDidChangeNotification, NSWorkspace.didActivateApplicationNotification] {
+            NSWorkspace.shared.notificationCenter.publisher(for: name)
+                .sink { [weak self] _ in self?.scheduleFullScreenCheck() }
+                .store(in: &cancellables)
+        }
+        updateFullScreen()
+
         clog("[Setup] notch=\(metrics.hasPhysicalNotch) size=\(metrics.notchWidth)x\(metrics.notchHeight)")
     }
 
@@ -386,11 +441,33 @@ public final class NotchWindowManager: NSObject, ObservableObject {
     @objc private func screenParametersChanged() {
         metrics = .current()
         applyFrame(animatedShrink: false)
+        scheduleFullScreenCheck()
+    }
+
+    // MARK: Full screen
+
+    private func scheduleFullScreenCheck() {
+        // The window list settles only after the Space switch animation.
+        fullScreenChecks.forEach { $0.cancel() }
+        fullScreenChecks = [0.05, 0.5, 1.2].map { delay in
+            let work = DispatchWorkItem { [weak self] in self?.updateFullScreen() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+            return work
+        }
+    }
+
+    private func updateFullScreen() {
+        guard let screen = NotchMetrics.hostScreen else { return }
+        let active = FullScreenDetector.isActive(on: screen)
+        guard active != fullScreenActive else { return }
+        fullScreenActive = active
+        clog("[FullScreen] \(active)")
+        if !isExpanded { applyFrame(animatedShrink: false) }
     }
 
     // MARK: Geometry
 
-    private var collapsedFrame: NSRect { metrics.collapsedRect(itemCount: engine.items.count) }
+    private var collapsedFrame: NSRect { metrics.collapsedRect(itemCount: collapsedCount) }
 
     private var expandedFrame: NSRect {
         let shelf = metrics.shelfRect, m = NotchMetrics.shadowMargin

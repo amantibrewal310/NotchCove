@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var hotKey: HotKey?
     private var keepItemsMenuItem: NSMenuItem?
+    private var showCountMenuItem: NSMenuItem?
     private var sizeMenuItems: [NSMenuItem] = []
     private var autoClearMenuItems: [NSMenuItem] = []
     private var dragModeMenuItems: [NSMenuItem] = []
@@ -108,6 +109,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(shotItem)
         screenshotMenuItems = shotMenu.items.filter { !$0.isSeparatorItem }
 
+        let count = NSMenuItem(title: "Show Item Count Beside Notch", action: #selector(toggleShowCount), keyEquivalent: "")
+        count.target = self
+        menu.addItem(count)
+        showCountMenuItem = count
+
         let keep = NSMenuItem(title: "Keep Items After Dragging Out", action: #selector(toggleKeepItems), keyEquivalent: "")
         keep.target = self
         menu.addItem(keep)
@@ -135,6 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        showCountMenuItem?.state = NotchWindowManager.shared.showsCountBesideNotch ? .on : .off
         keepItemsMenuItem?.state = UserDefaults.standard.bool(forKey: DragOutCoordinator.keepItemsKey) ? .on : .off
         for item in dragModeMenuItems {
             item.state = item.representedObject as? String == DragOpenMode.current.rawValue ? .on : .off
@@ -206,6 +213,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openInbox() {
         NSWorkspace.shared.open(CoveEngine.shared.inboxDirectory)
+    }
+
+    @objc private func toggleShowCount() {
+        let manager = NotchWindowManager.shared
+        manager.setShowsCountBesideNotch(!manager.showsCountBesideNotch)
     }
 
     @objc private func toggleKeepItems() {

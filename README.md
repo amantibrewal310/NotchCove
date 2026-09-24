@@ -27,9 +27,12 @@ Built with a **Rust core engine** for high-performance file management and tempo
 - **Persistent**: the shelf survives restarts. Entries whose files have been deleted are pruned. Files NotchCove creates itself (snippets, links, archives, received images) live in `~/Library/Application Support/NotchCove/Inbox` and are cleaned up when you remove them. Your own files are never deleted.
 - **Auto-clear**: items leave the shelf after **12 hours** by default (choose 1 hour, 1 day, 7 days or never). Your files stay where they are; only NotchCove's own inbox files (snippets, links, archives, received images) are deleted. No polling: one timer is armed for the next expiry, plus a check at launch and on wake.
 - **Screenshots to the shelf** (off by default): new screenshots appear on the shelf, which pops open for a moment. Choose *Add to Shelf, Keep Saved File* (the screenshot is still saved where macOS puts it) or *Move to Shelf Only* (keeps the Desktop clean; the file lives in the Cove Inbox and is cleared with the shelf unless you drag it out). Watches only the screenshot folder, with no polling. Tip: turn off *Show Floating Thumbnail* in the ⌘⇧5 options so screenshots are saved, and reach the shelf, instantly.
+- **Full-screen friendly**: in full-screen apps the notch drops the item count beside it, so nothing sticks out of the black top strip. Hover, click, drag and ⌃⌥C still open the shelf.
+- **Item count beside the notch** while it's closed; turn off *Show Item Count Beside Notch* for a plain black notch.
+- **Removing items** plays a small poof over the card, like Dropzone.
 - **Launch at Login** from the menu bar icon.
 - **Themes**: *Lantern* (warm amber, the default), *Graphite* (system blue) or *Signal* (vivid pink). The shelf stays black in all three.
-- **Settings** (menu bar icon): *Open Shelf While Dragging*, *Theme*, *Shelf Size* (Compact / Regular / Large), *Auto-Clear Items*, *Screenshots*, *Keep Items After Dragging Out*, *Launch at Login*, *Open Cove Inbox Folder*.
+- **Settings** (menu bar icon): *Open Shelf While Dragging*, *Theme*, *Shelf Size* (Compact / Regular / Large), *Auto-Clear Items*, *Screenshots*, *Show Item Count Beside Notch*, *Keep Items After Dragging Out*, *Launch at Login*, *Open Cove Inbox Folder*.
   To preview the external-display look on a MacBook: `defaults write com.notchcove.app ForceVirtualNotch -bool YES`.
 - **Lightweight**: ~0% CPU at idle and while the pointer moves, ~0.4% during mouse drags, 16–30 MB of memory, and a ~800 KB app bundle.
   Hover uses a tracking area on the notch window, not a system-wide move monitor, and drags are sampled only while the button is down.

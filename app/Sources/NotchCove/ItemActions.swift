@@ -144,8 +144,7 @@ enum ItemActions {
     }
 
     static func remove(_ items: [StagedItem]) {
-        CoveEngine.shared.remove(ids: items.map(\.id))
-        NotchWindowManager.shared.itemsRemoved()
+        NotchWindowManager.shared.poofThenRemove(items)
     }
 
     /// Builds the right-click menu for `items`. `stack` is set when the click

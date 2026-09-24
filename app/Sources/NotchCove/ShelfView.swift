@@ -45,7 +45,7 @@ public struct NotchRootView: View {
     private var size: CGSize {
         expanded
             ? CGSize(width: metrics.shelfWidth, height: metrics.shelfHeight)
-            : CGSize(width: metrics.collapsedWidth(itemCount: engine.items.count), height: metrics.notchHeight)
+            : CGSize(width: metrics.collapsedWidth(itemCount: manager.collapsedCount), height: metrics.notchHeight)
     }
 
     public var body: some View {
@@ -56,7 +56,7 @@ public struct NotchRootView: View {
                         .padding(.horizontal, earRadius)
                         .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
                 } else {
-                    CollapsedContent(count: engine.items.count, splitAroundNotch: metrics.hasPhysicalNotch, theme: manager.theme)
+                    CollapsedContent(count: manager.collapsedCount, splitAroundNotch: metrics.hasPhysicalNotch, theme: manager.theme)
                         .padding(.horizontal, earRadius)
                         .transition(.opacity)
                 }
@@ -136,10 +136,14 @@ private struct ShelfContent: View {
                                         scale: manager.metrics.scale,
                                         isSelected: manager.selection.contains(card.id),
                                         theme: manager.theme,
-                                        hover: manager.hoverState(for: card.id)
+                                        hover: manager.hoverState(for: card.id),
+                                        poof: manager.poofs[card.id]
                                     )
                                     .id(card.id)
-                                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+                                    .transition(.asymmetric(
+                                        insertion: .scale(scale: 0.6).combined(with: .opacity),
+                                        removal: .opacity
+                                    ))
                                 }
                             }
                             .padding(.horizontal, 10)
@@ -163,6 +167,37 @@ private struct ShelfContent: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.bottom, 12)
         }
+    }
+}
+
+/// Removal "poof", like Dropzone's: a small cloud of soft puffs bursts over
+/// the card and dissolves while the card fades. Only exists for the ~0.4 s
+/// the card takes to go, so nothing runs afterwards.
+private struct PoofCloud: View {
+    let burst: Bool
+    private static let puffs = 7
+
+    var body: some View {
+        ZStack {
+            puff(size: burst ? 30 : 16, opacity: 0.9)
+            ForEach(0..<Self.puffs, id: \.self) { index in
+                let angle = Double(index) / Double(Self.puffs) * 2 * .pi + 0.35
+                let distance: CGFloat = burst ? 24 : 6
+                puff(size: burst ? 22 : 14, opacity: 0.85)
+                    .offset(x: cos(angle) * distance, y: sin(angle) * distance * 0.8)
+            }
+        }
+        .opacity(burst ? 0 : 1)
+        .allowsHitTesting(false)
+    }
+
+    private func puff(size: CGFloat, opacity: Double) -> some View {
+        Circle()
+            .fill(RadialGradient(
+                colors: [.white.opacity(opacity), .white.opacity(opacity * 0.5), .white.opacity(0)],
+                center: .center, startRadius: 0, endRadius: size / 2
+            ))
+            .frame(width: size, height: size)
     }
 }
 
@@ -217,8 +252,7 @@ private struct ShelfHeader: View {
                     .accessibilityLabel("Drag everything out at once")
 
                 Button {
-                    CoveEngine.shared.clearAll()
-                    manager.itemsRemoved()
+                    manager.poofThenRemove(engine.items, clearAll: true)
                 } label: {
                     Image(systemName: "trash")
                 }
@@ -305,8 +339,10 @@ private struct CardView: View {
     let isSelected: Bool
     let theme: ShelfTheme
     @ObservedObject var hover: NotchWindowManager.HoverState
+    /// Set while the card is being removed: false, then true once the poof bursts.
+    var poof: Bool? = nil
 
-    private var isHovered: Bool { hover.isHovered }
+    private var isHovered: Bool { hover.isHovered && poof == nil }
 
     var body: some View {
         VStack(spacing: 4) {
@@ -351,6 +387,12 @@ private struct CardView: View {
             }
         }
         .animation(.easeOut(duration: 0.12), value: isHovered)
+        .scaleEffect(poof == true ? 0.55 : 1)
+        .opacity(poof == true ? 0 : 1)
+        .overlay {
+            if let poof { PoofCloud(burst: poof) }
+        }
+        .allowsHitTesting(poof == nil)
     }
 }
 

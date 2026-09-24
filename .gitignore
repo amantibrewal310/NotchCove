@@ -18,3 +18,6 @@ DerivedData/
 core/target/
 **/*.rs.bk
 Cargo.lock
+
+# Release zips
+dist/

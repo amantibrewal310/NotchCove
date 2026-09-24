@@ -1,0 +1,25 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- Logo C "Stack", on the macOS icon grid: an 824px body with a soft shadow. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E6E8EC"/>
+    </linearGradient>
+    <clipPath id="shape"><rect width="512" height="512" rx="114"/></clipPath>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000000" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+  <g transform="translate(100 100) scale(1.609375)">
+    <rect width="512" height="512" rx="114" fill="#FFFFFF" filter="url(#shadow)"/>
+    <g clip-path="url(#shape)">
+      <rect width="512" height="512" fill="url(#bg)"/>
+      <rect x="190" y="92" width="132" height="84" rx="16" fill="#BCDBFF" stroke="#F7F8FA" stroke-width="10"/>
+      <rect x="150" y="166" width="212" height="112" rx="22" fill="#5AAEFF" stroke="#F3F4F7" stroke-width="10"/>
+      <rect x="104" y="266" width="304" height="152" rx="30" fill="#0A7AF0" stroke="#EEF0F3" stroke-width="10"/>
+      <rect x="136" y="294" width="96" height="14" rx="7" fill="#FFFFFF" fill-opacity="0.85"/>
+      <path d="M126 0H386V64C386 97 360 118 328 118H184C152 118 126 97 126 64Z" fill="#000000"/>
+    </g>
+    <rect x="1" y="1" width="510" height="510" rx="113" fill="none" stroke="#000000" stroke-opacity="0.08" stroke-width="2"/>
+  </g>
+</svg>

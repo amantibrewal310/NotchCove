@@ -23,6 +23,8 @@ let package = Package(
             name: "NotchCove",
             dependencies: ["CCoveCore"],
             path: "Sources/NotchCove",
+            // Optimise for size; the app does little heavy computation.
+            swiftSettings: [.unsafeFlags(["-Osize"])],
             linkerSettings: [
                 .unsafeFlags([
                     "\(coreLibDir)/libcove_core.a"

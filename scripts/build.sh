@@ -2,7 +2,13 @@
 set -e
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export PATH="$HOME/.cargo/bin:$PATH"
+VERSION="$(tr -d '[:space:]' < "$PROJECT_ROOT/VERSION")"
+export PATH="$HOME/.cargo/bin:/opt/homebrew/opt/rustup/bin:/usr/local/opt/rustup/bin:$PATH"
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "❌ cargo not found. Install Rust: brew install rustup && rustup default stable"
+    exit 1
+fi
 
 echo "🦀 Step 1/3: Building Rust Core (cove-core)..."
 cd "$PROJECT_ROOT/core"
@@ -19,20 +25,28 @@ CONTENTS_DIR="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
+# Start from a clean bundle so no stale files end up in a release
+rm -rf "$APP_BUNDLE"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 # Copy binary
 cp "$PROJECT_ROOT/app/.build/release/NotchCove" "$MACOS_DIR/NotchCove"
 chmod +x "$MACOS_DIR/NotchCove"
+# Drop the symbol table; keeps the bundle small without affecting behaviour
+strip "$MACOS_DIR/NotchCove"
+
+cp "$PROJECT_ROOT/app/Resources/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 
 # Generate Info.plist
-cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
+cat << EOF > "$CONTENTS_DIR/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
     <string>NotchCove</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.notchcove.app</string>
     <key>CFBundleName</key>
@@ -40,9 +54,17 @@ cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>$VERSION</string>
+    <key>CFBundleVersion</key>
+    <string>$VERSION</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>NotchCove adds new screenshots to the shelf when that option is on.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>NotchCove shows files you put on the shelf.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>NotchCove shows files you put on the shelf.</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSHighResolutionCapable</key>

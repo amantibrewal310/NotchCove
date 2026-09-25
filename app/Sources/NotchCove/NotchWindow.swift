@@ -142,8 +142,11 @@ final class NotchWindowManager: NSObject, ObservableObject {
     }
 
     /// Items the closed notch shows a count for: none when the count is off, or
-    /// in full screen, where the plain notch blends into the black top strip.
-    var collapsedCount: Int { showsCountBesideNotch && !fullScreenActive ? engine.items.count : 0 }
+    /// in full screen, where a real notch blends into the black top strip. (The
+    /// virtual notch isn't shown there, and keeps its count as it slides back in.)
+    var collapsedCount: Int {
+        showsCountBesideNotch && !(fullScreenActive && metrics.hasPhysicalNotch) ? engine.items.count : 0
+    }
 
     /// A full-screen app is showing on the notch's display.
     @Published private(set) var fullScreenActive = false
@@ -157,9 +160,29 @@ final class NotchWindowManager: NSObject, ObservableObject {
     private func updateCollapsedVisibility() {
         guard let panel, !isExpanded else { return }
         let hide = hidesCollapsedNotch
-        panel.alphaValue = hide ? 0 : 1
+        setOnAllSpaces(metrics.hasPhysicalNotch)
+        // Pinned to desktops, the panel isn't on full-screen Spaces at all, and
+        // stays opaque so it slides in with the desktop.
+        panel.alphaValue = hide && !pinnedToDesktops ? 0 : 1
         panel.ignoresMouseEvents = hide
         setMoveMonitorActive(hide)
+    }
+
+    /// The closed virtual notch lives on desktop Spaces only, so a Space switch
+    /// carries it in and out with the desktop (see `Spaces.pin`). The open
+    /// shelf and a real notch are on every Space.
+    private var pinnedToDesktops = false
+
+    private func setOnAllSpaces(_ all: Bool) {
+        guard let panel else { return }
+        if all {
+            guard !panel.collectionBehavior.contains(.canJoinAllSpaces) else { return }
+            panel.collectionBehavior.insert(.canJoinAllSpaces)
+            panel.orderFrontRegardless()
+            pinnedToDesktops = false
+        } else if let screen = NotchMetrics.hostScreen {
+            pinnedToDesktops = Spaces.pin(panel, toDesktopsOn: screen)
+        }
     }
     private var fullScreenChecks: [DispatchWorkItem] = []
 
@@ -234,6 +257,10 @@ final class NotchWindowManager: NSObject, ObservableObject {
                 .sink { [weak self] _ in self?.scheduleFullScreenCheck() }
                 .store(in: &cancellables)
         }
+        // Catches desktops added since the panel was last pinned.
+        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.activeSpaceDidChangeNotification)
+            .sink { [weak self] _ in self?.updateCollapsedVisibility() }
+            .store(in: &cancellables)
         updateFullScreen()
 
         clog("[Setup] notch=\(metrics.hasPhysicalNotch) size=\(metrics.notchWidth)x\(metrics.notchHeight)")
@@ -264,7 +291,7 @@ final class NotchWindowManager: NSObject, ObservableObject {
 
     private func updateFullScreen() {
         guard let screen = NotchMetrics.hostScreen else { return }
-        let active = FullScreenDetector.isActive(on: screen)
+        let active = Spaces.isFullScreen(on: screen)
         guard active != fullScreenActive else { return }
         fullScreenActive = active
         clog("[FullScreen] \(active)")
@@ -340,6 +367,7 @@ final class NotchWindowManager: NSObject, ObservableObject {
         openReason = reason
         // Grow the (transparent) window first, then animate the shelf inside it.
         resizeWork?.cancel()
+        setOnAllSpaces(true)
         panel?.alphaValue = 1
         panel?.ignoresMouseEvents = false
         panel?.setFrame(expandedFrame, display: true)

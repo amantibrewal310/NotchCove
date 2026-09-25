@@ -72,28 +72,13 @@ final class NotchPanel: NSPanel {
 
     private func view<T: NSView>(at event: NSEvent, as type: T.Type) -> T? {
         guard let content = contentView else { return nil }
-        var view = content.hitTest(content.convert(event.locationInWindow, from: nil))
+        // hitTest takes the point in the superview's coordinates.
+        var view = content.hitTest(content.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow)
         while let current = view {
             if let match = current as? T { return match }
             view = current.superview
         }
-        // SwiftUI can wrap an AppKit view in a container whose frame doesn't
-        // cover it (the settings button in the header), so hitTest misses it.
-        // Fall back to the views' own frames within the shelf.
-        let inShelf = MainActor.assumeIsolated {
-            NotchWindowManager.shared.interactiveRect.contains(convertPoint(toScreen: event.locationInWindow))
-        }
-        guard inShelf else { return nil }
-        func search(_ view: NSView) -> T? {
-            if let match = view as? T {
-                return match.convert(match.bounds, to: nil).contains(event.locationInWindow) ? match : nil
-            }
-            for sub in view.subviews.reversed() where !sub.isHidden {
-                if let match = search(sub) { return match }
-            }
-            return nil
-        }
-        return search(content)
+        return nil
     }
 
     override func keyDown(with event: NSEvent) {
@@ -168,7 +153,8 @@ final class CoveHostingView: NSHostingView<NotchRootView> {
     /// than landing on invisible controls.
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let window else { return super.hitTest(point) }
-        let screenPoint = window.convertPoint(toScreen: convert(point, to: nil))
+        // `point` is in the superview's coordinates; this view is flipped.
+        let screenPoint = window.convertPoint(toScreen: superview?.convert(point, to: nil) ?? point)
         return manager.interactiveRect.contains(screenPoint) ? super.hitTest(point) : nil
     }
 

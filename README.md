@@ -31,7 +31,7 @@ Built with a **Rust core engine** for high-performance file management and tempo
 - **Persistent**: the shelf survives restarts. Entries whose files have been deleted are pruned. Files NotchCove creates itself (snippets, links, archives, received images) live in `~/Library/Application Support/NotchCove/Inbox` and are cleaned up when you remove them. Your own files are never deleted.
 - **Auto-clear**: items leave the shelf after **12 hours** by default (choose 1 hour, 1 day, 7 days or never). Your files stay where they are; only NotchCove's own inbox files (snippets, links, archives, received images) are deleted. No polling: one timer is armed for the next expiry, plus a check at launch and on wake.
 - **Screenshots to the shelf** (off by default): new screenshots appear on the shelf, which pops open for a moment. Choose *Add to Shelf, Keep Saved File* (the screenshot is still saved where macOS puts it) or *Move to Shelf Only* (keeps the Desktop clean; the file lives in the Cove Inbox and is cleared with the shelf unless you drag it out). Watches only the screenshot folder, with no polling. Tip: turn off *Show Floating Thumbnail* in the ⌘⇧5 options so screenshots are saved, and reach the shelf, instantly.
-- **Full-screen friendly**: in full-screen apps the notch drops the item count beside it, so nothing sticks out of the black top strip. Hover, click, drag and ⌃⌥C still open the shelf.
+- **Full-screen friendly**: in full-screen apps the notch drops the item count beside it, so nothing sticks out of the black top strip. On external displays the virtual notch stays on your desktops only: it slides in and out with the desktop when you switch Spaces and never covers a full-screen app. Hovering the top edge, dragging files in and ⌃⌥C still open the shelf there.
 - **Item count beside the notch** while it's closed; turn off *Show Item Count Beside Notch* for a plain black notch.
 - **Removing items** plays a small poof over the card, like Dropzone.
 - **Launch at Login** from the menu bar icon.
@@ -60,6 +60,7 @@ NotchCove/
 │   │   ├── AppDelegate.swift     # Menu bar status item & app lifecycle
 │   │   ├── NotchWindow.swift     # Panel, drop destination, open/close state machine
 │   │   ├── NotchGeometry.swift   # Physical & virtual notch geometry
+│   │   ├── FullScreen.swift      # Full-screen detection & desktop-only Spaces for the virtual notch
 │   │   ├── ShelfView.swift       # SwiftUI shelf UI & animations
 │   │   ├── DropIngest.swift      # Files, promises, images, links, text → shelf
 │   │   ├── DragOut.swift         # Drag source, card mouse handling
@@ -85,7 +86,7 @@ Apple Silicon Macs, macOS 14 (Sonoma) or newer:
 brew install --cask amantibrewal310/tap/notchcove
 ```
 
-Update with `brew upgrade --cask notchcove`; remove with `brew uninstall --cask notchcove` (add `--zap` to also delete the shelf's data).
+Update with `brew update && brew upgrade --cask notchcove` (`brew update` fetches the latest cask, so a new release shows up right away); remove with `brew uninstall --cask notchcove` (add `--zap` to also delete the shelf's data).
 
 ---
 

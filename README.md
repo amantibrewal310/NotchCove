@@ -22,13 +22,14 @@ Built with a **Rust core engine** for high-performance file management and tempo
   - Accepts more than files: **promised files** (Mail, Photos, Safari), **images** from browsers, **links** (saved as `.webloc`), and **text** (saved as `.txt`). ⌘V pastes the clipboard onto the shelf.
 - **Drag out**
   - Drag a file, a stack, a multi-selection, or everything at once (the stack icon in the header) into Finder, Slack, Mail, or a browser upload.
-  - Originals are **copied** by default and never moved by accident. Hold **⌘** while dragging to move them instead.
+  - Your files are **copied** by default and never moved by accident. Hold **⌘** while dragging to move them instead. Files NotchCove made itself (snippets, links, received images) can move out on a same-disk drop, so no stray copy stays in the Cove Inbox.
   - The shelf moves out of the way while you drag, so you can drop onto whatever is underneath.
   - Dropped items leave the shelf. Turn on *Keep Items After Dragging Out* in the settings to keep them.
 - **Quick actions** (right-click, or with the keyboard while the shelf is focused)
   - Quick Look (Space), Open (⏎), Open With, Reveal in Finder (⌘R), Share, AirDrop, Compress to zip, Copy (⌘C), Copy Path, Remove (⌫).
   - Select with click, ⌘-click, ⇧-click, ⌘A, or ← →. Esc closes.
-- **Persistent**: the shelf survives restarts. Entries whose files have been deleted are pruned. Files NotchCove creates itself (snippets, links, archives, received images) live in `~/Library/Application Support/NotchCove/Inbox` and are cleaned up when you remove them. Your own files are never deleted.
+  - The trash icon in the header clears the whole shelf.
+- **Persistent**: the shelf survives restarts. Entries whose files have been deleted are pruned. Files NotchCove creates itself (snippets, links, archives, received images) live in `~/Library/Application Support/NotchCove/Inbox` and are cleaned up, folders included, when they leave the shelf: removed, cleared, expired, or dragged out. Your own files are never deleted.
 - **Auto-clear**: items leave the shelf after **12 hours** by default (choose 1 hour, 1 day, 7 days or never). Your files stay where they are; only NotchCove's own inbox files (snippets, links, archives, received images) are deleted. No polling: one timer is armed for the next expiry, plus a check at launch and on wake.
 - **Screenshots to the shelf** (off by default): new screenshots appear on the shelf, which pops open for a moment. Choose *Add to Shelf, Keep Saved File* (the screenshot is still saved where macOS puts it) or *Move to Shelf Only* (keeps the Desktop clean; the file lives in the Cove Inbox and is cleared with the shelf unless you drag it out). Watches only the screenshot folder, with no polling. Tip: turn off *Show Floating Thumbnail* in the ⌘⇧5 options so screenshots are saved, and reach the shelf, instantly.
 - **Full-screen friendly**: in full-screen apps the notch drops the item count beside it, so nothing sticks out of the black top strip. On external displays the virtual notch (or its tab) stays on your desktops only: it slides in and out with the desktop when you switch Spaces and never covers a full-screen app. Hovering the top edge, dragging files in and ⌃⌥C still open the shelf there.

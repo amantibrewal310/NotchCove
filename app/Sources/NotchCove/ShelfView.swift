@@ -37,13 +37,15 @@ struct NotchRootView: View {
 
     private var metrics: NotchMetrics { manager.metrics }
     private var expanded: Bool { manager.isExpanded }
-    private var earRadius: CGFloat { expanded ? 14 : 6 }
-    private var shape: NotchShape { NotchShape(topRadius: earRadius, bottomRadius: expanded ? 24 : 10) }
+    /// Closed virtual notch tucked away: a small tab while items wait, else nothing.
+    private var tucked: Bool { !expanded && manager.tucksVirtualNotch }
+    private var earRadius: CGFloat { expanded ? 14 : tucked ? 0 : 6 }
+    private var shape: NotchShape { NotchShape(topRadius: earRadius, bottomRadius: expanded ? 24 : tucked ? 2.5 : 10) }
 
     private var size: CGSize {
-        expanded
-            ? CGSize(width: metrics.shelfWidth, height: metrics.shelfHeight)
-            : CGSize(width: metrics.collapsedWidth(itemCount: manager.collapsedCount), height: metrics.notchHeight)
+        if expanded { return CGSize(width: metrics.shelfWidth, height: metrics.shelfHeight) }
+        if tucked { return CGSize(width: 44, height: 0) }
+        return CGSize(width: metrics.collapsedWidth(itemCount: manager.collapsedCount), height: metrics.notchHeight)
     }
 
     var body: some View {
@@ -52,7 +54,7 @@ struct NotchRootView: View {
                 if expanded {
                     ShelfContent()
                         .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
-                } else {
+                } else if !tucked {
                     CollapsedContent(count: manager.collapsedCount, splitAroundNotch: metrics.hasPhysicalNotch, theme: manager.theme)
                         .transition(.opacity)
                 }
@@ -67,6 +69,18 @@ struct NotchRootView: View {
                     .fill(Color.black)
                     .shadow(color: .black.opacity(expanded ? 0.45 : 0), radius: 14, y: 6)
             )
+
+            // Its own layer, so the shelf never takes the accent colour: it
+            // fades in once the shelf has shrunk away and leaves as it opens.
+            if tucked && manager.collapsedCount > 0 {
+                UnevenRoundedRectangle(bottomLeadingRadius: 2.5, bottomTrailingRadius: 2.5)
+                    .fill(manager.theme.accent)
+                    .frame(width: 44, height: 5)
+                    .transition(.asymmetric(
+                        insertion: .opacity.animation(.easeOut(duration: 0.2).delay(0.3)),
+                        removal: .identity
+                    ))
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .environment(\.colorScheme, .dark)
@@ -248,6 +262,16 @@ private struct ShelfHeader: View {
                 .buttonStyle(HeaderButtonStyle())
                 .accessibilityLabel("Clear shelf")
             }
+
+            SettingsButton()
+                .frame(width: 22, height: 22)
+                .overlay(
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.75))
+                        .allowsHitTesting(false)
+                )
+                .accessibilityLabel("Settings")
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 12)

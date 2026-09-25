@@ -35,9 +35,13 @@ final class NotchPanel: NSPanel {
     override func sendEvent(_ event: NSEvent) {
         switch event.type {
         case .leftMouseDown:
-            if let card = card(at: event) {
+            if let card = view(at: event, as: CardInteractionView.CardNSView.self) {
                 trackedCard = card
                 card.mouseDown(with: event)
+                return
+            }
+            if let button = view(at: event, as: SettingsButton.ButtonView.self) {
+                button.mouseDown(with: event)
                 return
             }
         case .leftMouseDragged:
@@ -51,26 +55,45 @@ final class NotchPanel: NSPanel {
         case .scrollWheel:
             MainActor.assumeIsolated { NotchWindowManager.shared.noteScrolling() }
         case .rightMouseDown:
-            if let card = card(at: event) {
+            if let card = view(at: event, as: CardInteractionView.CardNSView.self) {
                 if let menu = card.menu(for: event) {
                     NSMenu.popUpContextMenu(menu, with: event, for: card)
                 }
                 return
             }
+            // Anywhere else on the shelf: the settings, also reachable with the menu bar icon hidden.
+            MainActor.assumeIsolated { (NSApp.delegate as? AppDelegate)?.showSettingsMenu() }
+            return
         default:
             break
         }
         super.sendEvent(event)
     }
 
-    private func card(at event: NSEvent) -> CardInteractionView.CardNSView? {
+    private func view<T: NSView>(at event: NSEvent, as type: T.Type) -> T? {
         guard let content = contentView else { return nil }
         var view = content.hitTest(content.convert(event.locationInWindow, from: nil))
         while let current = view {
-            if let card = current as? CardInteractionView.CardNSView { return card }
+            if let match = current as? T { return match }
             view = current.superview
         }
-        return nil
+        // SwiftUI can wrap an AppKit view in a container whose frame doesn't
+        // cover it (the settings button in the header), so hitTest misses it.
+        // Fall back to the views' own frames within the shelf.
+        let inShelf = MainActor.assumeIsolated {
+            NotchWindowManager.shared.interactiveRect.contains(convertPoint(toScreen: event.locationInWindow))
+        }
+        guard inShelf else { return nil }
+        func search(_ view: NSView) -> T? {
+            if let match = view as? T {
+                return match.convert(match.bounds, to: nil).contains(event.locationInWindow) ? match : nil
+            }
+            for sub in view.subviews.reversed() where !sub.isHidden {
+                if let match = search(sub) { return match }
+            }
+            return nil
+        }
+        return search(content)
     }
 
     override func keyDown(with event: NSEvent) {

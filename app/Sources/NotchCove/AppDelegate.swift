@@ -7,6 +7,9 @@ import ServiceManagement
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var hotKey: HotKey?
+    /// The settings menu, shown by the menu bar icon and from the shelf.
+    private let menu = NSMenu()
+    private static let hidesIconKey = "HidesMenuBarIcon"
     /// Menu items with a checkmark, refreshed each time the menu opens.
     private var checkedItems: [(item: NSMenuItem, state: () -> NSControl.StateValue)] = []
 
@@ -27,7 +30,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = Brand.glyph
 
-        let menu = NSMenu()
         menu.delegate = self
         let manager = NotchWindowManager.shared
 
@@ -46,12 +48,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         addToggle("Show Item Count Beside Notch", to: menu, isOn: { manager.showsCountBesideNotch }) {
             manager.setShowsCountBesideNotch(!manager.showsCountBesideNotch)
         }
+        addToggle("Always Show Virtual Notch", to: menu, isOn: { manager.alwaysShowsVirtualNotch }) {
+            manager.setAlwaysShowsVirtualNotch(!manager.alwaysShowsVirtualNotch)
+        }
         addToggle("Keep Items After Dragging Out", to: menu, isOn: { DragOutCoordinator.keepItems }) {
             DragOutCoordinator.keepItems.toggle()
         }
         menu.addItem(ClosureMenuItem("Clear Shelf") { CoveEngine.shared.clearAll() })
         menu.addItem(.separator())
 
+        addToggle("Hide Menu Bar Icon", to: menu, isOn: { UserDefaults.standard.bool(forKey: Self.hidesIconKey) }) { [weak self] in
+            self?.setHidesStatusItem(!UserDefaults.standard.bool(forKey: Self.hidesIconKey))
+        }
         let login = ClosureMenuItem("Launch at Login") { Self.toggleLaunchAtLogin() }
         menu.addItem(login)
         checkedItems.append((login, {
@@ -66,7 +74,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(ClosureMenuItem("Quit NotchCove", key: "q") { NSApp.terminate(nil) })
 
         item.menu = menu
+        item.isVisible = !UserDefaults.standard.bool(forKey: Self.hidesIconKey)
         statusItem = item
+    }
+
+    private func setHidesStatusItem(_ hide: Bool) {
+        UserDefaults.standard.set(hide, forKey: Self.hidesIconKey)
+        statusItem?.isVisible = !hide
+    }
+
+    /// Shows the settings menu below a view, or at the pointer, for when the
+    /// menu bar icon is hidden.
+    func showSettingsMenu(below view: NSView? = nil) {
+        if let view {
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: view.isFlipped ? view.bounds.maxY + 4 : -4), in: view)
+        } else {
+            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        }
+    }
+
+    /// Opening NotchCove again while it runs brings back a hidden menu bar icon,
+    /// so the settings can't get lost.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        setHidesStatusItem(false)
+        return false
     }
 
     private func addChoices<T: Setting>(

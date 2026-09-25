@@ -13,7 +13,7 @@ Built with a **Rust core engine** for high-performance file management and tempo
 ## ✨ Features (Phase 1: The Drop Bar Shelf)
 
 - **Lives in the notch**
-  - Sits flush with the MacBook camera notch (`NSScreen.safeAreaInsets`). On external or non-notched displays it draws a virtual notch inside the menu bar, so it never covers your windows.
+  - Sits flush with the MacBook camera notch (`NSScreen.safeAreaInsets`). On external or non-notched displays there's no notch to blend into, so it stays out of sight: a small tab at the top centre of the menu bar while items are waiting, nothing when the shelf is empty. Hover there and the shelf drops down. Prefer a black notch in the menu bar? Turn on *Always Show Virtual Notch*.
   - Hover the notch to peek, click it to keep it open until you click elsewhere, or press **⌃⌥C** from anywhere.
 - **Drag in, like Dropzone's Drop Bar**
   - The shelf opens with a drop zone as soon as you start dragging files, so you never have to push into the top edge (which triggers Mission Control). Release anywhere else and it closes itself. Prefer the quieter behaviour? *Open Shelf While Dragging → Only Near the Notch*.
@@ -24,22 +24,23 @@ Built with a **Rust core engine** for high-performance file management and tempo
   - Drag a file, a stack, a multi-selection, or everything at once (the stack icon in the header) into Finder, Slack, Mail, or a browser upload.
   - Originals are **copied** by default and never moved by accident. Hold **⌘** while dragging to move them instead.
   - The shelf moves out of the way while you drag, so you can drop onto whatever is underneath.
-  - Dropped items leave the shelf. Turn on *Keep Items After Dragging Out* in the menu bar to keep them.
+  - Dropped items leave the shelf. Turn on *Keep Items After Dragging Out* in the settings to keep them.
 - **Quick actions** (right-click, or with the keyboard while the shelf is focused)
   - Quick Look (Space), Open (⏎), Open With, Reveal in Finder (⌘R), Share, AirDrop, Compress to zip, Copy (⌘C), Copy Path, Remove (⌫).
   - Select with click, ⌘-click, ⇧-click, ⌘A, or ← →. Esc closes.
 - **Persistent**: the shelf survives restarts. Entries whose files have been deleted are pruned. Files NotchCove creates itself (snippets, links, archives, received images) live in `~/Library/Application Support/NotchCove/Inbox` and are cleaned up when you remove them. Your own files are never deleted.
 - **Auto-clear**: items leave the shelf after **12 hours** by default (choose 1 hour, 1 day, 7 days or never). Your files stay where they are; only NotchCove's own inbox files (snippets, links, archives, received images) are deleted. No polling: one timer is armed for the next expiry, plus a check at launch and on wake.
 - **Screenshots to the shelf** (off by default): new screenshots appear on the shelf, which pops open for a moment. Choose *Add to Shelf, Keep Saved File* (the screenshot is still saved where macOS puts it) or *Move to Shelf Only* (keeps the Desktop clean; the file lives in the Cove Inbox and is cleared with the shelf unless you drag it out). Watches only the screenshot folder, with no polling. Tip: turn off *Show Floating Thumbnail* in the ⌘⇧5 options so screenshots are saved, and reach the shelf, instantly.
-- **Full-screen friendly**: in full-screen apps the notch drops the item count beside it, so nothing sticks out of the black top strip. On external displays the virtual notch stays on your desktops only: it slides in and out with the desktop when you switch Spaces and never covers a full-screen app. Hovering the top edge, dragging files in and ⌃⌥C still open the shelf there.
+- **Full-screen friendly**: in full-screen apps the notch drops the item count beside it, so nothing sticks out of the black top strip. On external displays the virtual notch (or its tab) stays on your desktops only: it slides in and out with the desktop when you switch Spaces and never covers a full-screen app. Hovering the top edge, dragging files in and ⌃⌥C still open the shelf there.
 - **Item count beside the notch** while it's closed; turn off *Show Item Count Beside Notch* for a plain black notch.
 - **Removing items** plays a small poof over the card, like Dropzone.
-- **Launch at Login** from the menu bar icon.
+- **Launch at Login** from the settings menu.
 - **Themes**: *Lantern* (warm amber, the default), *Graphite* (system blue) or *Signal* (vivid pink). The shelf stays black in all three.
-- **Settings** (menu bar icon): *Open Shelf While Dragging*, *Theme*, *Shelf Size* (Compact / Regular / Large), *Auto-Clear Items*, *Screenshots*, *Show Item Count Beside Notch*, *Keep Items After Dragging Out*, *Launch at Login*, *Open Cove Inbox Folder*.
+- **Settings** (menu bar icon, the gear in the shelf header, or right-click the shelf): *Open Shelf While Dragging*, *Theme*, *Shelf Size* (Compact / Regular / Large), *Auto-Clear Items*, *Screenshots*, *Show Item Count Beside Notch*, *Always Show Virtual Notch*, *Keep Items After Dragging Out*, *Hide Menu Bar Icon*, *Launch at Login*, *Open Cove Inbox Folder*.
+  With the icon hidden, open NotchCove again (Spotlight or Finder) to bring it back.
   To preview the external-display look on a MacBook: `defaults write com.notchcove.app ForceVirtualNotch -bool YES`.
 - **Lightweight**: ~0% CPU at idle and while the pointer moves, ~0.4% during mouse drags, 16–30 MB of memory, and a ~800 KB app bundle.
-  Hover uses a tracking area on the notch window, not a system-wide move monitor, and drags are sampled only while the button is down.
+  Hover uses a tracking area on the notch window, not a system-wide move monitor (except while the virtual notch is tucked away or hidden in full screen), and drags are sampled only while the button is down.
 - **No permissions needed**: no Accessibility or Screen Recording prompts. Mouse monitoring and the Carbon hotkey work without them.
 
 ---

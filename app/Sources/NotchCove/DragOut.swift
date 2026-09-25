@@ -244,3 +244,19 @@ struct DragAllHandle: NSViewRepresentable {
         }
     }
 }
+
+// MARK: - Settings button
+
+/// Header control that opens the settings menu, which is also the menu bar
+/// icon's. AppKit, like the cards, because the panel routes clicks to it directly.
+struct SettingsButton: NSViewRepresentable {
+    func makeNSView(context: Context) -> ButtonView { ButtonView() }
+    func updateNSView(_ nsView: ButtonView, context: Context) {}
+
+    final class ButtonView: NSView {
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override func mouseDown(with event: NSEvent) {
+            (NSApp.delegate as? AppDelegate)?.showSettingsMenu(below: self)
+        }
+    }
+}

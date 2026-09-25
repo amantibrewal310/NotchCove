@@ -113,6 +113,22 @@ final class NotchWindowManager: NSObject, ObservableObject {
         if !isExpanded { applyFrame(animatedShrink: false) }
     }
 
+    static let alwaysShowVirtualNotchKey = "AlwaysShowVirtualNotch"
+    @Published private(set) var alwaysShowsVirtualNotch =
+        UserDefaults.standard.bool(forKey: alwaysShowVirtualNotchKey)
+
+    func setAlwaysShowsVirtualNotch(_ show: Bool) {
+        UserDefaults.standard.set(show, forKey: Self.alwaysShowVirtualNotchKey)
+        alwaysShowsVirtualNotch = show
+        if !isExpanded { applyFrame(animatedShrink: false) }
+    }
+
+    /// Without a real notch to hide, a black notch in the menu bar looks out of
+    /// place, so by default the closed virtual notch tucks away: nothing when
+    /// the shelf is empty, a small tab when items are waiting. The top centre
+    /// of the screen still opens the shelf.
+    var tucksVirtualNotch: Bool { !metrics.hasPhysicalNotch && !alwaysShowsVirtualNotch }
+
     /// Cards being removed, by id: false while the poof is drawn small, true once it bursts.
     @Published private(set) var poofs: [String: Bool] = [:]
 
@@ -157,6 +173,10 @@ final class NotchWindowManager: NSObject, ObservableObject {
     /// and the hotkey still open the shelf.
     private var hidesCollapsedNotch: Bool { fullScreenActive && !metrics.hasPhysicalNotch }
 
+    /// The closed notch lets clicks through to the menu bar or app below, and
+    /// the move monitor watches for hovers instead of the panel.
+    private var collapsedPassesThrough: Bool { hidesCollapsedNotch || tucksVirtualNotch }
+
     private func updateCollapsedVisibility() {
         guard let panel, !isExpanded else { return }
         let hide = hidesCollapsedNotch
@@ -164,8 +184,8 @@ final class NotchWindowManager: NSObject, ObservableObject {
         // Pinned to desktops, the panel isn't on full-screen Spaces at all, and
         // stays opaque so it slides in with the desktop.
         panel.alphaValue = hide && !pinnedToDesktops ? 0 : 1
-        panel.ignoresMouseEvents = hide
-        setMoveMonitorActive(hide)
+        panel.ignoresMouseEvents = collapsedPassesThrough
+        setMoveMonitorActive(collapsedPassesThrough)
     }
 
     /// The closed virtual notch lives on desktop Spaces only, so a Space switch
@@ -388,7 +408,7 @@ final class NotchWindowManager: NSObject, ObservableObject {
         }
         selection = []
         setHovered(hoveredCardId, false)
-        setMoveMonitorActive(hidesCollapsedNotch)
+        setMoveMonitorActive(collapsedPassesThrough)
         hoverSuppressedUntilExit = hoverOpenRect.contains(NSEvent.mouseLocation)
         relinquishKeyFocus()
         applyFrame(animatedShrink: true)

@@ -139,12 +139,26 @@ impl ShelfManager {
             } else {
                 fs::remove_file(path)
             };
-            // Clean up the per-drop folder if it's now empty.
-            if let Some(parent) = path.parent() {
-                if Some(parent.to_path_buf()) != self.inbox_dir() {
-                    let _ = fs::remove_dir(parent);
-                }
-            }
+        }
+        self.remove_empty_drop_folder(item);
+    }
+
+    /// Removes an owned item's per-drop folder once nothing is left in it but
+    /// Finder's .DS_Store: after its file was deleted, moved out by a drag, or
+    /// went missing. Other items from the same drop keep it.
+    fn remove_empty_drop_folder(&self, item: &StagedItem) {
+        let path = Path::new(&item.original_path);
+        if !item.owned || !self.is_in_inbox(path) {
+            return;
+        }
+        let Some(parent) = path.parent() else { return };
+        if Some(parent.to_path_buf()) == self.inbox_dir() {
+            return;
+        }
+        let Ok(entries) = fs::read_dir(parent) else { return };
+        if entries.flatten().all(|e| e.file_name() == ".DS_Store") {
+            let _ = fs::remove_file(parent.join(".DS_Store"));
+            let _ = fs::remove_dir(parent);
         }
     }
 
@@ -159,9 +173,11 @@ impl ShelfManager {
     fn remove_where(&mut self, pred: impl Fn(&StagedItem) -> bool, delete_owned: bool) -> usize {
         let (removed, kept): (Vec<_>, Vec<_>) = self.items.drain(..).partition(|i| pred(i));
         self.items = kept;
-        if delete_owned {
-            for item in &removed {
+        for item in &removed {
+            if delete_owned {
                 self.delete_if_owned(item);
+            } else {
+                self.remove_empty_drop_folder(item);
             }
         }
         if !removed.is_empty() {
@@ -200,13 +216,16 @@ impl ShelfManager {
 
     /// Drops items whose files have been deleted or moved outside NotchCove.
     pub fn prune_missing(&mut self) -> usize {
-        let before = self.items.len();
-        self.items.retain(|i| Path::new(&i.original_path).exists());
-        let removed = before - self.items.len();
-        if removed > 0 {
+        let (missing, kept): (Vec<_>, Vec<_>) =
+            self.items.drain(..).partition(|i| !Path::new(&i.original_path).exists());
+        self.items = kept;
+        for item in &missing {
+            self.remove_empty_drop_folder(item);
+        }
+        if !missing.is_empty() {
             self.save();
         }
-        removed
+        missing.len()
     }
 
     pub fn get_items(&self) -> &[StagedItem] {
@@ -327,6 +346,42 @@ mod tests {
         assert!(item.owned);
         assert_eq!(shelf.remove_items(&[item.id], true), 1);
         assert!(!Path::new(&snippet).exists());
+        assert!(!drop_dir.exists());
+    }
+
+    #[test]
+    fn moved_out_inbox_files_leave_no_empty_folder() {
+        let storage = temp_dir("moved");
+        let mut shelf = ShelfManager::with_storage(100, &storage);
+        let drop_dir = shelf.inbox_dir().unwrap().join("drop1");
+        fs::create_dir_all(&drop_dir).unwrap();
+        let snippet = touch(&drop_dir, "snippet.txt", "hello");
+        let item = shelf.stage_file(&snippet).unwrap();
+        // A drag moved the file out, and Finder left its .DS_Store behind.
+        let elsewhere = temp_dir("moved-dest").join("snippet.txt");
+        fs::rename(&snippet, &elsewhere).unwrap();
+        touch(&drop_dir, ".DS_Store", "");
+        assert_eq!(shelf.remove_items(&[item.id], false), 1);
+        assert!(elsewhere.exists());
+        assert!(!drop_dir.exists());
+    }
+
+    #[test]
+    fn drop_folder_stays_while_other_items_use_it() {
+        let storage = temp_dir("shared");
+        let mut shelf = ShelfManager::with_storage(100, &storage);
+        let drop_dir = shelf.inbox_dir().unwrap().join("drop1");
+        fs::create_dir_all(&drop_dir).unwrap();
+        let a = touch(&drop_dir, "a.txt", "a");
+        let b = touch(&drop_dir, "b.txt", "b");
+        let staged = shelf.stage_files(&[a.clone(), b.clone()]).unwrap();
+        let a_id = staged.iter().find(|i| i.original_path == a).unwrap().id.clone();
+        fs::remove_file(&a).unwrap();
+        assert_eq!(shelf.remove_items(&[a_id], false), 1);
+        assert!(Path::new(&b).exists());
+        assert_eq!(shelf.prune_missing(), 0);
+        fs::remove_file(&b).unwrap();
+        assert_eq!(shelf.prune_missing(), 1);
         assert!(!drop_dir.exists());
     }
 

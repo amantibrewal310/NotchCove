@@ -226,3 +226,55 @@ final class CoveHostingView: NSHostingView<NotchRootView> {
         manager.externalDragFinished()
     }
 }
+
+// MARK: - Hot zone
+
+/// Transparent window over the spot that opens the shelf, for when the closed
+/// notch is invisible or tucked away and lets clicks through. It takes the
+/// pointer's enter, move and exit there, and a click opens the shelf.
+final class HotZonePanel: NSPanel {
+    init() {
+        super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        // Just below the notch panel, on every Space: it draws nothing, so
+        // unlike the notch it has nothing to show during a Space switch.
+        level = .statusBar + 7
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = false
+        isReleasedWhenClosed = false
+        hidesOnDeactivate = false
+        animationBehavior = .none
+        // Set explicitly, so the window takes events over its transparent pixels.
+        ignoresMouseEvents = false
+        contentView = ZoneView()
+    }
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+
+    private final class ZoneView: NSView {
+        private var area: NSTrackingArea?
+        private var manager: NotchWindowManager { MainActor.assumeIsolated { NotchWindowManager.shared } }
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            if let area { removeTrackingArea(area) }
+            let area = NSTrackingArea(
+                rect: bounds,
+                options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+                owner: self
+            )
+            addTrackingArea(area)
+            self.area = area
+        }
+
+        override func mouseEntered(with event: NSEvent) { manager.pointerMoved(to: NSEvent.mouseLocation) }
+        override func mouseMoved(with event: NSEvent) { manager.pointerMoved(to: NSEvent.mouseLocation) }
+        override func mouseExited(with event: NSEvent) { manager.pointerMoved(to: NSEvent.mouseLocation) }
+        override func mouseDown(with event: NSEvent) { manager.expand(.click) }
+        override func rightMouseDown(with event: NSEvent) { manager.expand(.click) }
+    }
+}

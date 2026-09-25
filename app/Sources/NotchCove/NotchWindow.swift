@@ -169,12 +169,12 @@ final class NotchWindowManager: NSObject, ObservableObject {
 
     /// Without a real notch there's no black strip to blend into in full
     /// screen, so the closed virtual notch turns invisible and lets clicks
-    /// through to the app. Hovering the spot (via the move monitor), file drags
+    /// through to the app. Hovering the spot (via the hot zone), file drags
     /// and the hotkey still open the shelf.
     private var hidesCollapsedNotch: Bool { fullScreenActive && !metrics.hasPhysicalNotch }
 
     /// The closed notch lets clicks through to the menu bar or app below, and
-    /// the move monitor watches for hovers instead of the panel.
+    /// the hot zone watches for hovers instead of the panel.
     private var collapsedPassesThrough: Bool { hidesCollapsedNotch || tucksVirtualNotch }
 
     private func updateCollapsedVisibility() {
@@ -185,7 +185,7 @@ final class NotchWindowManager: NSObject, ObservableObject {
         // stays opaque so it slides in with the desktop.
         panel.alphaValue = hide && !pinnedToDesktops ? 0 : 1
         panel.ignoresMouseEvents = collapsedPassesThrough
-        setMoveMonitorActive(collapsedPassesThrough)
+        updateHotZone()
     }
 
     /// The closed virtual notch lives on desktop Spaces only, so a Space switch
@@ -205,6 +205,21 @@ final class NotchWindowManager: NSObject, ObservableObject {
         }
     }
     private var fullScreenChecks: [DispatchWorkItem] = []
+
+    /// Invisible window over the hover spot while the closed notch lets events
+    /// through. Its tracking area hears the pointer only when it's there; a
+    /// system-wide move monitor would wake the app for every move (~2% CPU
+    /// while the pointer moves).
+    private let hotZone = HotZonePanel()
+
+    private func updateHotZone() {
+        if !isExpanded && collapsedPassesThrough {
+            hotZone.setFrame(hoverOpenRect, display: false)
+            hotZone.orderFrontRegardless()
+        } else {
+            hotZone.orderOut(nil)
+        }
+    }
 
     private var panel: NotchPanel?
     private var monitors: [Any] = []
@@ -394,6 +409,7 @@ final class NotchWindowManager: NSObject, ObservableObject {
         if reason.isSticky { takeKeyFocus() }
         withAnimation(Self.openAnimation) { isExpanded = true }
         setMoveMonitorActive(true)
+        updateHotZone()
     }
 
     func collapse() {
@@ -408,7 +424,8 @@ final class NotchWindowManager: NSObject, ObservableObject {
         }
         selection = []
         setHovered(hoveredCardId, false)
-        setMoveMonitorActive(collapsedPassesThrough)
+        setMoveMonitorActive(false)
+        updateHotZone()
         hoverSuppressedUntilExit = hoverOpenRect.contains(NSEvent.mouseLocation)
         relinquishKeyFocus()
         applyFrame(animatedShrink: true)
@@ -493,7 +510,7 @@ final class NotchWindowManager: NSObject, ObservableObject {
 
     private func installMonitors() {
         // Only clicks are monitored system-wide (no Accessibility permission needed):
-        // moves use a tracking area (plus moveMonitor while open), drags are polled.
+        // moves use tracking areas (plus moveMonitor while open), drags are polled.
         let global = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] event in

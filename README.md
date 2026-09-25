@@ -39,8 +39,8 @@ Built with a **Rust core engine** for high-performance file management and tempo
 - **Settings** (menu bar icon, the gear in the shelf header, or right-click the shelf): *Open Shelf While Dragging*, *Theme*, *Shelf Size* (Compact / Regular / Large), *Auto-Clear Items*, *Screenshots*, *Show Item Count Beside Notch*, *Always Show Virtual Notch*, *Keep Items After Dragging Out*, *Hide Menu Bar Icon*, *Launch at Login*, *Open Cove Inbox Folder*.
   With the icon hidden, open NotchCove again (Spotlight or Finder) to bring it back.
   To preview the external-display look on a MacBook: `defaults write com.notchcove.app ForceVirtualNotch -bool YES`.
-- **Lightweight**: ~0% CPU at idle and while the pointer moves, ~0.4% during mouse drags, 16–30 MB of memory, and a ~800 KB app bundle.
-  Hover uses a tracking area on the notch window, not a system-wide move monitor (except while the virtual notch is tucked away or hidden in full screen), and drags are sampled only while the button is down.
+- **Lightweight**: ~0% CPU at idle and while the pointer moves, ~0.5% during mouse drags, ~15–30 MB of memory, and a ~900 KB app bundle.
+  Hover uses a tracking area on the notch window (or, while the virtual notch is tucked away or hidden in full screen, on an invisible window over the same spot), not a system-wide move monitor, and drags are sampled only while the button is down.
 - **No permissions needed**: no Accessibility or Screen Recording prompts. Mouse monitoring and the Carbon hotkey work without them.
 
 ---

@@ -19,6 +19,7 @@ enum DropTarget: Equatable {
     case none
     case stash
     case airDrop
+    case agent
 }
 
 // MARK: - NotchWindowManager
@@ -53,8 +54,43 @@ final class NotchWindowManager: NSObject, ObservableObject {
         showsAirDropTarget = show
     }
 
+    static let showAgentTargetKey = "ShowAgentTarget"
+    @Published private(set) var showsAgentTarget =
+        UserDefaults.standard.object(forKey: showAgentTargetKey) as? Bool ?? true
+
+    func setShowsAgentTarget(_ show: Bool) {
+        UserDefaults.standard.set(show, forKey: Self.showAgentTargetKey)
+        showsAgentTarget = show
+    }
+
+    @Published private(set) var agent: CodingAgent = .current
+
+    func setAgent(_ agent: CodingAgent) {
+        CodingAgent.current = agent
+        self.agent = agent
+    }
+
+    /// Targets pinned at the shelf's trailing edge, left to right.
+    var pinnedTargets: [DropTarget] {
+        (showsAgentTarget ? [.agent] : []) + (showsAirDropTarget ? [.airDrop] : [])
+    }
+
+    /// Sends files to a pinned target.
+    func send(_ urls: [URL], to target: DropTarget) {
+        switch target {
+        case .airDrop: ItemActions.airDrop(urls: urls)
+        case .agent: AgentHandoff.handOff(urls)
+        case .none, .stash: break
+        }
+    }
+
+    /// What a pinned target's click or shortcut acts on: the selection, else everything.
+    var actionItems: [StagedItem] {
+        selectedItems.isEmpty ? displayedCards.flatMap(\.items) : selectedItems
+    }
+
     @Published private(set) var activeDropTarget: DropTarget = .none
-    @Published var isAirDropCardHovered = false
+    @Published var hoveredPinnedTarget: DropTarget?
 
     /// Per-card hover state, so a hover change redraws one card, not the whole shelf.
     final class HoverState: ObservableObject {
@@ -683,8 +719,9 @@ final class NotchWindowManager: NSObject, ObservableObject {
         }
         let target: DropTarget
         let isReceiving = isReceivingDrag || !isInternal
-        if showsAirDropTarget && metrics.airDropTargetRect(isReceivingDrag: isReceiving).contains(point) {
-            target = .airDrop
+        let pinned = metrics.pinnedTargetRects(pinnedTargets, isReceivingDrag: isReceiving)
+        if let hit = pinned.first(where: { $0.value.contains(point) })?.key {
+            target = hit
         } else if !isInternal && metrics.shelfRect.contains(point) {
             target = .stash
         } else {
@@ -757,7 +794,7 @@ final class NotchWindowManager: NSObject, ObservableObject {
     }
 
     func dragOutMoved(to point: NSPoint) {
-        if showsAirDropTarget {
+        if !pinnedTargets.isEmpty {
             _ = dropHovered(at: point, isInternal: true)
         }
         // Get out of the way once the drag leaves, so you can drop onto whatever is underneath.
@@ -862,9 +899,8 @@ final class NotchWindowManager: NSObject, ObservableObject {
                 DropIngest.ingest(.general) { [weak self] count in self?.didReceiveDrop(count: count) }
             case ("o", [.command]): ItemActions.open(selectedItems)
             case ("r", [.command]): ItemActions.reveal(selectedItems)
-            case ("r", [.command, .shift]):
-                let items = selectedItems.isEmpty ? displayedCards.flatMap(\.items) : selectedItems
-                ItemActions.airDrop(items)
+            case ("r", [.command, .shift]): ItemActions.airDrop(actionItems)
+            case ("a", [.command, .shift]): ItemActions.handToAgent(actionItems)
             case ("w", [.command]): collapse()
             default: return false
             }

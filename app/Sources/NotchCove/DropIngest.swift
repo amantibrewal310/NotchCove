@@ -76,8 +76,9 @@ enum DropIngest {
         completion(0)
     }
 
-    /// Resolves pasteboard contents into URLs ready for AirDrop sharing.
-    static func ingestForAirDrop(_ pasteboard: NSPasteboard, completion: @escaping @MainActor ([URL]) -> Void) {
+    /// Resolves pasteboard contents into URLs for a pinned target (AirDrop,
+    /// agent) without staging them.
+    static func resolveURLs(_ pasteboard: NSPasteboard, completion: @escaping @MainActor ([URL]) -> Void) {
         // 1. Real files and folders.
         let fileURLs = (pasteboard.readObjects(
             forClasses: [NSURL.self],
@@ -91,7 +92,7 @@ enum DropIngest {
         // 2. File promises: files that don't exist on disk yet.
         if let receivers = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver],
            !receivers.isEmpty {
-            receivePromisesForAirDrop(receivers, completion: completion)
+            receivePromisesUnstaged(receivers, completion: completion)
             return
         }
 
@@ -202,7 +203,7 @@ enum DropIngest {
         DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: finish)
     }
 
-    private static func receivePromisesForAirDrop(
+    private static func receivePromisesUnstaged(
         _ receivers: [NSFilePromiseReceiver],
         completion: @escaping @MainActor ([URL]) -> Void
     ) {

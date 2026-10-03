@@ -8,7 +8,8 @@ final class DragOutCoordinator: NSObject, NSDraggingSource {
 
     private(set) var draggedItems: [StagedItem] = []
     private(set) var isDragging = false
-    private(set) var droppedOnAirDrop = false
+    /// Dropped on AirDrop or the agent: those send the items, so they stay on the shelf.
+    private(set) var droppedOnPinnedTarget = false
 
     /// Keep items on the shelf after they're dropped somewhere.
     static var keepItems: Bool {
@@ -16,8 +17,8 @@ final class DragOutCoordinator: NSObject, NSDraggingSource {
         set { UserDefaults.standard.set(newValue, forKey: "keepItemsAfterDragOut") }
     }
 
-    func markDroppedOnAirDrop() {
-        droppedOnAirDrop = true
+    func markDroppedOnPinnedTarget() {
+        droppedOnPinnedTarget = true
     }
 
     func beginDrag(items: [StagedItem], from view: NSView, event: NSEvent) {
@@ -42,7 +43,7 @@ final class DragOutCoordinator: NSObject, NSDraggingSource {
         }
 
         draggedItems = items
-        droppedOnAirDrop = false
+        droppedOnPinnedTarget = false
         isDragging = true
         let session = view.beginDraggingSession(with: dragItems, event: event, source: self)
         session.animatesToStartingPositionsOnCancelOrFail = true
@@ -78,12 +79,12 @@ final class DragOutCoordinator: NSObject, NSDraggingSource {
     ) {
         MainActor.assumeIsolated {
             let items = draggedItems
-            let wasAirDrop = droppedOnAirDrop
-            droppedOnAirDrop = false
+            let wasPinnedTarget = droppedOnPinnedTarget
+            droppedOnPinnedTarget = false
             draggedItems = []
             isDragging = false
 
-            if !wasAirDrop {
+            if !wasPinnedTarget {
                 if operation.contains(.move) {
                     // The file now lives elsewhere; forget it without deleting anything.
                     CoveEngine.shared.remove(ids: items.map(\.id), deleteOwned: false)
@@ -280,14 +281,24 @@ struct SettingsButton: NSViewRepresentable {
     }
 }
 
-// MARK: - AirDrop interaction layer
+// MARK: - Pinned target interaction layer
 
-/// AppKit layer over the AirDrop card for click and hover tracking.
-struct AirDropInteractionView: NSViewRepresentable {
-    func makeNSView(context: Context) -> AirDropNSView { AirDropNSView() }
-    func updateNSView(_ nsView: AirDropNSView, context: Context) {}
+/// AppKit layer over a pinned target card (AirDrop, agent) for click and hover tracking.
+struct PinnedTargetInteractionView: NSViewRepresentable {
+    let target: DropTarget
 
-    final class AirDropNSView: NSView {
+    func makeNSView(context: Context) -> TargetNSView {
+        let view = TargetNSView()
+        view.target = target
+        return view
+    }
+
+    func updateNSView(_ nsView: TargetNSView, context: Context) {
+        nsView.target = target
+    }
+
+    final class TargetNSView: NSView {
+        var target: DropTarget = .none
         private var trackingArea: NSTrackingArea?
 
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -305,18 +316,19 @@ struct AirDropInteractionView: NSViewRepresentable {
         }
 
         override func mouseEntered(with event: NSEvent) {
-            NotchWindowManager.shared.isAirDropCardHovered = true
+            NotchWindowManager.shared.hoveredPinnedTarget = target
         }
 
         override func mouseExited(with event: NSEvent) {
-            NotchWindowManager.shared.isAirDropCardHovered = false
+            let manager = NotchWindowManager.shared
+            if manager.hoveredPinnedTarget == target { manager.hoveredPinnedTarget = nil }
         }
 
         override func mouseDown(with event: NSEvent) {
             let manager = NotchWindowManager.shared
-            let items = manager.selectedItems.isEmpty ? manager.displayedCards.flatMap(\.items) : manager.selectedItems
+            let items = manager.actionItems
             if !items.isEmpty {
-                ItemActions.airDrop(items)
+                manager.send(items.map(\.url), to: target)
             }
         }
     }

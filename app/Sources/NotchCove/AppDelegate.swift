@@ -12,6 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private static let hidesIconKey = "HidesMenuBarIcon"
     /// Menu items with a checkmark, refreshed each time the menu opens.
     private var checkedItems: [(item: NSMenuItem, state: () -> NSControl.StateValue)] = []
+    /// Menu items shown only while something is available (an installed terminal).
+    private var availableItems: [(item: NSMenuItem, isAvailable: () -> Bool)] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -54,6 +56,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         addToggle("Show AirDrop Target on Shelf", to: menu, isOn: { manager.showsAirDropTarget }) {
             manager.setShowsAirDropTarget(!manager.showsAirDropTarget)
         }
+        addToggle("Show Agent Target on Shelf", to: menu, isOn: { manager.showsAgentTarget }) {
+            manager.setShowsAgentTarget(!manager.showsAgentTarget)
+        }
+        addChoices("Agent", to: menu) { manager.setAgent($0) }
+        addChoices("Agent Terminal", to: menu, isAvailable: \.isInstalled) { TerminalApp.current = $0 }
         addToggle("Keep Items After Dragging Out", to: menu, isOn: { DragOutCoordinator.keepItems }) {
             DragOutCoordinator.keepItems.toggle()
         }
@@ -104,7 +111,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func addChoices<T: Setting>(
-        _ title: String, to menu: NSMenu, separatorBefore: T? = nil, select: @escaping (T) -> Void
+        _ title: String, to menu: NSMenu, separatorBefore: T? = nil,
+        isAvailable: ((T) -> Bool)? = nil, select: @escaping (T) -> Void
     ) {
         let submenu = NSMenu()
         for choice in T.allCases {
@@ -112,6 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let entry = ClosureMenuItem(choice.title) { select(choice) }
             submenu.addItem(entry)
             checkedItems.append((entry, { T.current == choice ? .on : .off }))
+            if let isAvailable { availableItems.append((entry, { isAvailable(choice) })) }
         }
         let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         parent.submenu = submenu
@@ -126,6 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         for (item, state) in checkedItems { item.state = state() }
+        for (item, isAvailable) in availableItems { item.isHidden = !isAvailable() }
         // Picks up a changed screenshot folder even if no prefs notification arrived.
         ScreenshotWatcher.shared.apply()
     }

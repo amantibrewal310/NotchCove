@@ -118,6 +118,10 @@ enum ItemActions {
         }
     }
 
+    static func handToAgent(_ items: [StagedItem]) {
+        AgentHandoff.handOff(items.map(\.url))
+    }
+
     fileprivate static func airDropFinished() {
         isAirDropping = false
     }
@@ -174,6 +178,9 @@ enum ItemActions {
         let airDropItem = ClosureMenuItem("AirDrop\(noun)", symbol: "airplayaudio", key: "r") { airDrop(items) }
         airDropItem.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(airDropItem)
+        let agentItem = ClosureMenuItem("Open in \(CodingAgent.current.title)", symbol: "terminal", key: "a") { handToAgent(items) }
+        agentItem.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(agentItem)
         menu.addItem(ClosureMenuItem("Compress\(noun)", symbol: "doc.zipper") { compress(items) })
         menu.addItem(.separator())
 

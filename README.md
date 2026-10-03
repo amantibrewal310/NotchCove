@@ -26,6 +26,12 @@ Built with a **Rust core engine** for high-performance file management and tempo
   - **Dual Drop Zones**: During active drags, the shelf presents dual drop zones: *Stash* on the left and *AirDrop* on the right with responsive haptic feedback.
   - **One-Click Sharing & Keyboard Shortcut**: Click the AirDrop shelf card or header button, or press **⇧⌘R** to AirDrop selected (or all) items instantly.
   - Toggle anytime via *Settings → Show AirDrop Target on Shelf*.
+- **Hand files to a coding agent**
+  - An **agent card** sits beside AirDrop. Drop files on it, or drag shelf cards onto it, and your coding agent opens in a new terminal window with their paths in its first prompt. Click the card, right-click → *Open in …*, or press **⇧⌘A** to send the selection (or everything).
+  - Drop a single folder and the agent simply starts in that folder. With several files it starts in the deepest folder they share.
+  - Agents: **Claude Code**, **Codex**, **Pi**, **OpenCode** (*Settings → Agent*). Terminals: **Ghostty**, **iTerm**, **Terminal**, **WezTerm**, **kitty**, **Alacritty**; only installed ones are listed, and an installed third-party terminal is picked by default (*Settings → Agent Terminal*).
+  - It runs your own CLI through your login shell, so your PATH (nvm, Homebrew) and sign-ins apply. No API keys, no network, no Automation prompt. When the agent exits, the window stays open as a normal shell.
+  - Hide it with *Settings → Show Agent Target on Shelf*.
 - **Drag out**
   - Drag a file, a stack, a multi-selection, or everything at once (the stack icon in the header) into Finder, Slack, Mail, or a browser upload.
   - Your files are **copied** by default and never moved by accident. Hold **⌘** while dragging to move them instead. Files NotchCove made itself (snippets, links, received images) can move out on a same-disk drop, so no stray copy stays in the Cove Inbox.
@@ -43,7 +49,7 @@ Built with a **Rust core engine** for high-performance file management and tempo
 - **Removing items** plays a small poof over the card, like Dropzone.
 - **Launch at Login** from the settings menu.
 - **Themes**: *Lantern* (warm amber, the default), *Graphite* (system blue) or *Signal* (vivid pink). The shelf stays black in all three.
-- **Settings** (menu bar icon, the gear in the shelf header, or right-click the shelf): *Open Shelf While Dragging*, *Theme*, *Shelf Size* (Compact / Regular / Large), *Auto-Clear Items*, *Screenshots*, *Show Item Count Beside Notch*, *Always Show Virtual Notch*, *Show AirDrop Target on Shelf*, *Keep Items After Dragging Out*, *Hide Menu Bar Icon*, *Launch at Login*, *Open Cove Inbox Folder*.
+- **Settings** (menu bar icon, the gear in the shelf header, or right-click the shelf): *Open Shelf While Dragging*, *Theme*, *Shelf Size* (Compact / Regular / Large), *Auto-Clear Items*, *Screenshots*, *Show Item Count Beside Notch*, *Always Show Virtual Notch*, *Show AirDrop Target on Shelf*, *Show Agent Target on Shelf*, *Agent*, *Agent Terminal*, *Keep Items After Dragging Out*, *Hide Menu Bar Icon*, *Launch at Login*, *Open Cove Inbox Folder*.
   With the icon hidden, open NotchCove again (Spotlight or Finder) to bring it back.
   To preview the external-display look on a MacBook: `defaults write com.notchcove.app ForceVirtualNotch -bool YES`.
 - **Lightweight**: ~0% CPU at idle and while the pointer moves, ~0.5% during mouse drags, ~15–30 MB of memory, and a ~900 KB app bundle.
@@ -70,9 +76,10 @@ NotchCove/
 │   │   ├── NotchGeometry.swift   # Physical & virtual notch geometry
 │   │   ├── FullScreen.swift      # Full-screen detection & desktop-only Spaces for the virtual notch
 │   │   ├── ShelfView.swift       # SwiftUI shelf UI & animations
-│   │   ├── DropIngest.swift      # Files, promises, images, links, text → shelf & AirDrop
+│   │   ├── DropIngest.swift      # Files, promises, images, links, text → shelf, AirDrop & agent
 │   │   ├── DragOut.swift         # Drag source, card mouse handling, internal card drags
 │   │   ├── ItemActions.swift     # Quick Look, context-menu actions, AirDrop service delegate
+│   │   ├── AgentHandoff.swift    # Opens Claude Code / Codex / Pi / OpenCode in a terminal
 │   │   ├── Thumbnails.swift      # Quick Look thumbnails
 │   │   ├── HotKey.swift          # Global ⌃⌥C shortcut (Carbon)
 │   │   └── RustBridge.swift      # Swift wrapper over Rust C-ABI

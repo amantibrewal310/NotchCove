@@ -51,10 +51,10 @@ struct NotchMetrics: Equatable {
     var shelfHeight: CGFloat { headerHeight + 6 + cardHeight + 12 }
     /// Thumbnail size of a single-file card.
     var cardThumbnailSize: CGFloat { (50 * scale).rounded() }
-    /// Width of the pinned AirDrop drop target card.
-    var airDropTargetWidth: CGFloat { (68 * scale).rounded() }
-    /// Width of the AirDrop drop zone during an active drag session.
-    var airDropDropZoneWidth: CGFloat { (130 * scale).rounded() }
+    /// Width of a pinned target card (AirDrop, agent).
+    var pinnedTargetWidth: CGFloat { (68 * scale).rounded() }
+    /// Width of a pinned target's drop zone during an active drag session.
+    var pinnedDropZoneWidth: CGFloat { (130 * scale).rounded() }
     /// The header row sits beside the notch cut-out, so it's at least as tall as the notch.
     var headerHeight: CGFloat { max(notchHeight, 28) }
     /// Transparent margin around the open shelf so its shadow isn't clipped.
@@ -131,36 +131,23 @@ struct NotchMetrics: Equatable {
         topCenteredRect(width: max(notchWidth + 240, 420), height: notchHeight + 70)
     }
 
-    /// Rect in screen coordinates for the AirDrop drop target on the shelf.
-    func airDropTargetRect(isReceivingDrag: Bool) -> NSRect {
-        let width = isReceivingDrag ? airDropDropZoneWidth : airDropTargetWidth
-        let insetTrailing: CGFloat = 10
-        let bottomPadding: CGFloat = 12
-        let topPadding: CGFloat = 6
-        let x = shelfRect.maxX - insetTrailing - width
-        let y = shelfRect.minY + bottomPadding
-        let height = shelfHeight - headerHeight - bottomPadding - topPadding
-        return NSRect(x: x, y: y, width: width, height: max(height, 20))
+    /// Rects in screen coordinates of the pinned targets (AirDrop, agent),
+    /// laid out left to right against the shelf's trailing edge.
+    func pinnedTargetRects(_ targets: [DropTarget], isReceivingDrag: Bool) -> [DropTarget: NSRect] {
+        let width = isReceivingDrag ? pinnedDropZoneWidth : pinnedTargetWidth
+        var rects: [DropTarget: NSRect] = [:]
+        var x = shelfRect.maxX - Self.targetInset
+        for target in targets.reversed() {
+            x -= width
+            rects[target] = NSRect(x: x, y: targetRowMinY, width: width, height: targetRowHeight)
+            x -= Self.targetSpacing
+        }
+        return rects
     }
 
-    /// Rect in screen coordinates for the Stash drop target.
-    func stashTargetRect(isReceivingDrag: Bool, showsAirDrop: Bool) -> NSRect {
-        let insetLeading: CGFloat = 10
-        let insetTrailing: CGFloat = 10
-        let spacing: CGFloat = 8
-        let bottomPadding: CGFloat = 12
-        let topPadding: CGFloat = 6
-        let x = shelfRect.minX + insetLeading
-        let y = shelfRect.minY + bottomPadding
-        let height = shelfHeight - headerHeight - bottomPadding - topPadding
-        let totalWidth = shelfRect.width - insetLeading - insetTrailing
-        let width: CGFloat
-        if showsAirDrop {
-            let airDropW = isReceivingDrag ? airDropDropZoneWidth : airDropTargetWidth
-            width = max(totalWidth - airDropW - spacing, 20)
-        } else {
-            width = totalWidth
-        }
-        return NSRect(x: x, y: y, width: width, height: max(height, 20))
-    }
+    private static let targetInset: CGFloat = 10
+    private static let targetSpacing: CGFloat = 8
+    /// The card row: 12 pt above the shelf's bottom edge, 6 pt below the header.
+    private var targetRowMinY: CGFloat { shelfRect.minY + 12 }
+    private var targetRowHeight: CGFloat { max(shelfHeight - headerHeight - 12 - 6, 20) }
 }

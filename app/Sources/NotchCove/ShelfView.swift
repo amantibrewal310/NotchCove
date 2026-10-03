@@ -126,7 +126,7 @@ private struct ShelfContent: View {
 
     var body: some View {
         let cards = manager.displayedCards
-        let showsAirDrop = manager.showsAirDropTarget
+        let pinned = manager.pinnedTargets
 
         VStack(spacing: 0) {
             ShelfHeader(cards: cards)
@@ -167,15 +167,19 @@ private struct ShelfContent: View {
                         }
                     }
 
-                    if showsAirDrop {
+                    if !pinned.isEmpty {
                         Rectangle()
                             .fill(.white.opacity(0.08))
                             .frame(width: 1, height: manager.metrics.cardHeight * 0.6)
                             .padding(.top, 6)
-                        AirDropShelfCard(theme: manager.theme)
-                            .frame(height: manager.metrics.cardHeight)
-                            .padding(.trailing, 10)
-                            .padding(.top, 6)
+                        HStack(spacing: 8) {
+                            ForEach(pinned, id: \.self) { target in
+                                PinnedTargetCard(target: target, theme: manager.theme)
+                            }
+                        }
+                        .frame(height: manager.metrics.cardHeight)
+                        .padding(.trailing, 10)
+                        .padding(.top, 6)
                     }
                 }
                 .opacity(manager.isReceivingDrag ? 0.15 : 1)
@@ -185,9 +189,9 @@ private struct ShelfContent: View {
                     HStack(spacing: 8) {
                         DropZone(targeted: manager.activeDropTarget == .stash, theme: manager.theme)
 
-                        if showsAirDrop {
-                            AirDropDropZone(targeted: manager.activeDropTarget == .airDrop, theme: manager.theme)
-                                .frame(width: manager.metrics.airDropDropZoneWidth)
+                        ForEach(pinned, id: \.self) { target in
+                            PinnedDropZone(target: target, targeted: manager.activeDropTarget == target, theme: manager.theme)
+                                .frame(width: manager.metrics.pinnedDropZoneWidth)
                         }
                     }
                     .padding(.horizontal, 10)
@@ -267,8 +271,7 @@ private struct ShelfHeader: View {
 
             if !cards.isEmpty {
                 Button {
-                    let items = manager.selectedItems.isEmpty ? manager.displayedCards.flatMap(\.items) : manager.selectedItems
-                    ItemActions.airDrop(items)
+                    ItemActions.airDrop(manager.actionItems)
                 } label: {
                     AirDropMark()
                         .stroke(style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
@@ -402,7 +405,35 @@ struct AirDropMark: Shape {
     }
 }
 
-private struct AirDropDropZone: View {
+/// Icon of a pinned target: the AirDrop mark, or a terminal for the agent.
+private struct PinnedTargetIcon: View {
+    let target: DropTarget
+    let size: CGFloat
+
+    var body: some View {
+        if target == .airDrop {
+            AirDropMark()
+                .stroke(style: StrokeStyle(lineWidth: size / 12, lineCap: .round))
+                .frame(width: size, height: size)
+        } else {
+            Image(systemName: "terminal")
+                .font(.system(size: size * 0.8, weight: .medium))
+                .frame(width: size, height: size)
+        }
+    }
+}
+
+private extension DropTarget {
+    @MainActor var pinnedTitle: String {
+        self == .agent ? NotchWindowManager.shared.agent.shortTitle : "AirDrop"
+    }
+
+    var releaseTitle: String { self == .agent ? "Release to open" : "Release to send" }
+}
+
+/// Drop zone of a pinned target, shown beside Stash while dragging.
+private struct PinnedDropZone: View {
+    let target: DropTarget
     let targeted: Bool
     let theme: ShelfTheme
 
@@ -419,12 +450,10 @@ private struct AirDropDropZone: View {
             )
             .overlay(
                 VStack(spacing: 8) {
-                    AirDropMark()
-                        .stroke(style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                        .frame(width: 24, height: 24)
+                    PinnedTargetIcon(target: target, size: 24)
                         .foregroundStyle(targeted ? theme.accent : theme.textSecondary)
                         .scaleEffect(targeted ? 1.15 : 1)
-                    Text(targeted ? "Release to send" : "AirDrop")
+                    Text(targeted ? target.releaseTitle : target.pinnedTitle)
                         .font(.system(size: 12, weight: .semibold))
                 }
                 .foregroundStyle(targeted ? theme.textPrimary : theme.textSecondary)
@@ -434,25 +463,26 @@ private struct AirDropDropZone: View {
     }
 }
 
-/// Pinned at the trailing edge: drop files on it to send them, or click to send the selection.
-private struct AirDropShelfCard: View {
+/// Pinned at the trailing edge: drop files on it to send them (AirDrop) or
+/// open them in the coding agent, or click to do that with the selection.
+private struct PinnedTargetCard: View {
     @ObservedObject private var manager = NotchWindowManager.shared
+    let target: DropTarget
     let theme: ShelfTheme
 
     var body: some View {
-        let isTargeted = manager.activeDropTarget == .airDrop
-        let isHovered = manager.isAirDropCardHovered
+        let isTargeted = manager.activeDropTarget == target
+        let isHovered = manager.hoveredPinnedTarget == target
         VStack(spacing: 7) {
-            AirDropMark()
-                .stroke(style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
-                .frame(width: 22, height: 22)
+            PinnedTargetIcon(target: target, size: 22)
                 .foregroundStyle(isTargeted || isHovered ? theme.accent : theme.textSecondary)
                 .scaleEffect(isTargeted ? 1.15 : 1)
-            Text("AirDrop")
+            Text(target.pinnedTitle)
                 .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(isTargeted || isHovered ? theme.textPrimary : theme.textSecondary)
+                .lineLimit(1)
         }
-        .frame(width: manager.metrics.airDropTargetWidth)
+        .frame(width: manager.metrics.pinnedTargetWidth)
         .frame(maxHeight: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -460,8 +490,10 @@ private struct AirDropShelfCard: View {
         )
         .animation(.easeOut(duration: 0.12), value: isHovered)
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isTargeted)
-        .overlay(AirDropInteractionView())
-        .accessibilityLabel("AirDrop. Drop files to send, or click to send the selection.")
+        .overlay(PinnedTargetInteractionView(target: target))
+        .accessibilityLabel(target == .agent
+            ? "\(manager.agent.title). Drop files to open them in a terminal, or click to open the selection."
+            : "AirDrop. Drop files to send, or click to send the selection.")
     }
 }
 

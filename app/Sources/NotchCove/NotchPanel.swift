@@ -40,8 +40,8 @@ final class NotchPanel: NSPanel {
                 card.mouseDown(with: event)
                 return
             }
-            if let airdrop = view(at: event, as: AirDropInteractionView.AirDropNSView.self) {
-                airdrop.mouseDown(with: event)
+            if let target = view(at: event, as: PinnedTargetInteractionView.TargetNSView.self) {
+                target.mouseDown(with: event)
                 return
             }
             if let button = view(at: event, as: SettingsButton.ButtonView.self) {
@@ -182,8 +182,8 @@ final class CoveHostingView: NSHostingView<NotchRootView> {
         let isInternal = info.draggingSource is DragOutCoordinator
         let target = manager.dropHovered(at: screenPoint(info), isInternal: isInternal)
         if isInternal {
-            // Cards dragged from the shelf can only be dropped on the AirDrop target.
-            return target == .airDrop ? .generic : []
+            // Cards dragged from the shelf can only be dropped on a pinned target.
+            return manager.pinnedTargets.contains(target) ? .generic : []
         }
         if acceptCache?.session != info.draggingSequenceNumber {
             acceptCache = (info.draggingSequenceNumber, DropIngest.canAccept(info.draggingPasteboard))
@@ -206,7 +206,7 @@ final class CoveHostingView: NSHostingView<NotchRootView> {
 
     override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
         if sender.draggingSource is DragOutCoordinator {
-            return manager.activeDropTarget == .airDrop
+            return manager.pinnedTargets.contains(manager.activeDropTarget)
         }
         return acceptCache?.accepts == true && manager.activeDropTarget != .none
     }
@@ -216,18 +216,18 @@ final class CoveHostingView: NSHostingView<NotchRootView> {
         let target = manager.activeDropTarget
 
         if sender.draggingSource is DragOutCoordinator {
-            guard target == .airDrop else { return false }
-            DragOutCoordinator.shared.markDroppedOnAirDrop()
+            guard manager.pinnedTargets.contains(target) else { return false }
+            DragOutCoordinator.shared.markDroppedOnPinnedTarget()
             let items = DragOutCoordinator.shared.draggedItems
-            manager.didReceiveDrop(count: items.count, target: .airDrop)
-            ItemActions.airDrop(items)
+            manager.didReceiveDrop(count: items.count, target: target)
+            manager.send(items.map(\.url), to: target)
             return true
         }
 
-        if target == .airDrop {
-            DropIngest.ingestForAirDrop(sender.draggingPasteboard) { urls in
-                manager.didReceiveDrop(count: urls.count, target: .airDrop)
-                ItemActions.airDrop(urls: urls)
+        if manager.pinnedTargets.contains(target) {
+            DropIngest.resolveURLs(sender.draggingPasteboard) { urls in
+                manager.didReceiveDrop(count: urls.count, target: target)
+                manager.send(urls, to: target)
             }
             return true
         } else {

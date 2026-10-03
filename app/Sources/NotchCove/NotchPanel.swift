@@ -40,6 +40,10 @@ final class NotchPanel: NSPanel {
                 card.mouseDown(with: event)
                 return
             }
+            if let airdrop = view(at: event, as: AirDropInteractionView.AirDropNSView.self) {
+                airdrop.mouseDown(with: event)
+                return
+            }
             if let button = view(at: event, as: SettingsButton.ButtonView.self) {
                 button.mouseDown(with: event)
                 return
@@ -175,13 +179,17 @@ final class CoveHostingView: NSHostingView<NotchRootView> {
     private var acceptCache: (session: Int, accepts: Bool)?
 
     private func operation(for info: NSDraggingInfo) -> NSDragOperation {
-        // Ignore our own items being dragged back in.
-        if info.draggingSource is DragOutCoordinator { return [] }
+        let isInternal = info.draggingSource is DragOutCoordinator
+        let target = manager.dropHovered(at: screenPoint(info), isInternal: isInternal)
+        if isInternal {
+            // Cards dragged from the shelf can only be dropped on the AirDrop target.
+            return target == .airDrop ? .generic : []
+        }
         if acceptCache?.session != info.draggingSequenceNumber {
             acceptCache = (info.draggingSequenceNumber, DropIngest.canAccept(info.draggingPasteboard))
         }
         guard acceptCache?.accepts == true else { return [] }
-        return manager.dropHovered(at: screenPoint(info)) ? .copy : []
+        return target != .none ? .copy : []
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
@@ -197,15 +205,37 @@ final class CoveHostingView: NSHostingView<NotchRootView> {
     }
 
     override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        !(sender.draggingSource is DragOutCoordinator)
+        if sender.draggingSource is DragOutCoordinator {
+            return manager.activeDropTarget == .airDrop
+        }
+        return acceptCache?.accepts == true && manager.activeDropTarget != .none
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let manager = self.manager
-        DropIngest.ingest(sender.draggingPasteboard) { count in
-            manager.didReceiveDrop(count: count)
+        let target = manager.activeDropTarget
+
+        if sender.draggingSource is DragOutCoordinator {
+            guard target == .airDrop else { return false }
+            DragOutCoordinator.shared.markDroppedOnAirDrop()
+            let items = DragOutCoordinator.shared.draggedItems
+            manager.didReceiveDrop(count: items.count, target: .airDrop)
+            ItemActions.airDrop(items)
+            return true
         }
-        return true
+
+        if target == .airDrop {
+            DropIngest.ingestForAirDrop(sender.draggingPasteboard) { urls in
+                manager.didReceiveDrop(count: urls.count, target: .airDrop)
+                ItemActions.airDrop(urls: urls)
+            }
+            return true
+        } else {
+            DropIngest.ingest(sender.draggingPasteboard) { count in
+                manager.didReceiveDrop(count: count, target: .stash)
+            }
+            return true
+        }
     }
 
     override func draggingEnded(_ sender: NSDraggingInfo) {
@@ -239,28 +269,33 @@ final class HotZonePanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
-    private final class ZoneView: NSView {
-        private var area: NSTrackingArea?
-        private var manager: NotchWindowManager { MainActor.assumeIsolated { NotchWindowManager.shared } }
+    final class ZoneView: NSView {
+        private var trackingArea: NSTrackingArea?
 
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
-            if let area { removeTrackingArea(area) }
+            if let trackingArea { removeTrackingArea(trackingArea) }
             let area = NSTrackingArea(
                 rect: bounds,
-                options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
                 owner: self
             )
             addTrackingArea(area)
-            self.area = area
+            trackingArea = area
         }
 
-        override func mouseEntered(with event: NSEvent) { manager.pointerMoved(to: NSEvent.mouseLocation) }
-        override func mouseMoved(with event: NSEvent) { manager.pointerMoved(to: NSEvent.mouseLocation) }
-        override func mouseExited(with event: NSEvent) { manager.pointerMoved(to: NSEvent.mouseLocation) }
-        override func mouseDown(with event: NSEvent) { manager.expand(.click) }
-        override func rightMouseDown(with event: NSEvent) { manager.expand(.click) }
+        override func mouseEntered(with event: NSEvent) {
+            MainActor.assumeIsolated { NotchWindowManager.shared.pointerMoved(to: NSEvent.mouseLocation) }
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            MainActor.assumeIsolated { NotchWindowManager.shared.pointerMoved(to: NSEvent.mouseLocation) }
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            MainActor.assumeIsolated { NotchWindowManager.shared.expand(.click) }
+        }
     }
 }

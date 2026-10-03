@@ -48,45 +48,24 @@ final class QuickLookController: NSObject, QLPreviewPanelDataSource, QLPreviewPa
     }
 
     nonisolated func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
-        // Space or Escape closes, just like Finder.
-        guard event.type == .keyDown, [kVK_Space, kVK_Escape].contains(Int(event.keyCode)) else { return false }
-        MainActor.assumeIsolated { panel.orderOut(nil) }
-        return true
+        guard event.type == .keyDown else { return false }
+        switch Int(event.keyCode) {
+        case kVK_Space, kVK_Escape:
+            MainActor.assumeIsolated { panel.orderOut(nil) }
+            return true
+        default:
+            return false
+        }
     }
 }
 
-// MARK: - Context menu
-
-final class ShareDelegate: NSObject, NSSharingServicePickerDelegate {
-    // Called with nil when the picker is dismissed without a choice.
-    func sharingServicePicker(_ picker: NSSharingServicePicker, didChoose service: NSSharingService?) {
-        MainActor.assumeIsolated { ItemActions.shareFinished() }
-    }
-}
-
-/// NSMenuItem that runs a closure, so menus can be built inline.
-final class ClosureMenuItem: NSMenuItem {
-    private let handler: () -> Void
-
-    init(_ title: String, symbol: String? = nil, key: String = "", handler: @escaping () -> Void) {
-        self.handler = handler
-        super.init(title: title, action: #selector(run), keyEquivalent: key)
-        target = self
-        if let symbol { image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
-    }
-
-    required init(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    @objc private func run() { handler() }
-}
+// MARK: - Item actions
 
 @MainActor
 enum ItemActions {
     private static var sharePicker: NSSharingServicePicker?
-    private static let shareDelegate = ShareDelegate()
-
-    /// True while the share picker is on screen, so the shelf stays open under it.
-    static var isSharing: Bool { sharePicker != nil }
+    private(set) static var isAirDropping = false
+    static var isSharing: Bool { sharePicker != nil || isAirDropping }
 
     static func quickLook(_ items: [StagedItem]) {
         QuickLookController.shared.toggle(urls: items.map(\.url))
@@ -126,12 +105,21 @@ enum ItemActions {
     }
 
     static func airDrop(_ items: [StagedItem]) {
-        guard let service = NSSharingService(named: .sendViaAirDrop) else { return }
-        let urls = items.map(\.url)
+        airDrop(urls: items.map(\.url))
+    }
+
+    static func airDrop(urls: [URL]) {
+        guard !urls.isEmpty, let service = NSSharingService(named: .sendViaAirDrop) else { return }
         if service.canPerform(withItems: urls) {
+            isAirDropping = true
+            service.delegate = airDropDelegate
             NSApp.activate()
             service.perform(withItems: urls)
         }
+    }
+
+    fileprivate static func airDropFinished() {
+        isAirDropping = false
     }
 
     static func compress(_ items: [StagedItem]) {
@@ -163,19 +151,16 @@ enum ItemActions {
         if count == 1, let item = items.first {
             let apps = NSWorkspace.shared.urlsForApplications(toOpen: item.url)
             if !apps.isEmpty {
-                let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
-                let sub = NSMenu()
-                for app in apps.prefix(12) {
+                let submenu = NSMenu()
+                for app in apps {
                     let name = FileManager.default.displayName(atPath: app.path)
-                    let entry = ClosureMenuItem(name) {
-                        NSWorkspace.shared.open([item.url], withApplicationAt: app, configuration: .init())
-                    }
-                    let icon = NSWorkspace.shared.icon(forFile: app.path)
-                    icon.size = NSSize(width: 16, height: 16)
-                    entry.image = icon
-                    sub.addItem(entry)
+                    let entry = ClosureMenuItem(name) { NSWorkspace.shared.open([item.url], withApplicationAt: app, configuration: .init()) }
+                    entry.image = NSWorkspace.shared.icon(forFile: app.path)
+                    entry.image?.size = NSSize(width: 16, height: 16)
+                    submenu.addItem(entry)
                 }
-                openWith.submenu = sub
+                let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
+                openWith.submenu = submenu
                 menu.addItem(openWith)
             }
         }
@@ -186,7 +171,9 @@ enum ItemActions {
         menu.addItem(ClosureMenuItem("Share…", symbol: "square.and.arrow.up") {
             share(items, anchor: anchor)
         })
-        menu.addItem(ClosureMenuItem("AirDrop", symbol: "airplayaudio") { airDrop(items) })
+        let airDropItem = ClosureMenuItem("AirDrop\(noun)", symbol: "airplayaudio", key: "r") { airDrop(items) }
+        airDropItem.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(airDropItem)
         menu.addItem(ClosureMenuItem("Compress\(noun)", symbol: "doc.zipper") { compress(items) })
         menu.addItem(.separator())
 
@@ -209,5 +196,49 @@ enum ItemActions {
         remove.keyEquivalentModifierMask = []
         menu.addItem(remove)
         return menu
+    }
+}
+
+// MARK: - Sharing delegate
+
+private final class ShareDelegate: NSObject, NSSharingServicePickerDelegate {
+    func sharingServicePicker(_ picker: NSSharingServicePicker, didChoose service: NSSharingService?) {
+        if service == nil {
+            MainActor.assumeIsolated { ItemActions.shareFinished() }
+        }
+    }
+}
+private let shareDelegate = ShareDelegate()
+
+private final class AirDropDelegateWrapper: NSObject, NSSharingServiceDelegate {
+    func sharingService(_ sharingService: NSSharingService, didShareItems items: [Any]) {
+        MainActor.assumeIsolated { ItemActions.airDropFinished() }
+    }
+
+    func sharingService(_ sharingService: NSSharingService, didFailToShareItems items: [Any], error: Error) {
+        MainActor.assumeIsolated { ItemActions.airDropFinished() }
+    }
+}
+private let airDropDelegate = AirDropDelegateWrapper()
+
+// MARK: - Menu item closure helper
+
+final class ClosureMenuItem: NSMenuItem {
+    private let handler: () -> Void
+
+    init(_ title: String, symbol: String? = nil, key: String = "", handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(trigger), keyEquivalent: key)
+        target = self
+        if let symbol {
+            image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+            image?.isTemplate = true
+        }
+    }
+
+    @MainActor required init(coder: NSCoder) { fatalError() }
+
+    @objc private func trigger() {
+        handler()
     }
 }

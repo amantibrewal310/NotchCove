@@ -6,13 +6,18 @@ import SwiftUI
 final class DragOutCoordinator: NSObject, NSDraggingSource {
     static let shared = DragOutCoordinator()
 
-    private var draggedItems: [StagedItem] = []
+    private(set) var draggedItems: [StagedItem] = []
     private(set) var isDragging = false
+    private(set) var droppedOnAirDrop = false
 
     /// Keep items on the shelf after they're dropped somewhere.
     static var keepItems: Bool {
         get { UserDefaults.standard.bool(forKey: "keepItemsAfterDragOut") }
         set { UserDefaults.standard.set(newValue, forKey: "keepItemsAfterDragOut") }
+    }
+
+    func markDroppedOnAirDrop() {
+        droppedOnAirDrop = true
     }
 
     func beginDrag(items: [StagedItem], from view: NSView, event: NSEvent) {
@@ -37,6 +42,7 @@ final class DragOutCoordinator: NSObject, NSDraggingSource {
         }
 
         draggedItems = items
+        droppedOnAirDrop = false
         isDragging = true
         let session = view.beginDraggingSession(with: dragItems, event: event, source: self)
         session.animatesToStartingPositionsOnCancelOrFail = true
@@ -49,7 +55,9 @@ final class DragOutCoordinator: NSObject, NSDraggingSource {
         sourceOperationMaskFor context: NSDraggingContext
     ) -> NSDragOperation {
         MainActor.assumeIsolated {
-            guard context == .outsideApplication else { return [] }
+            if context == .withinApplication {
+                return .generic
+            }
             // User files copy unless ⌘ is held; NotchCove's own inbox files may move.
             if NSEvent.modifierFlags.contains(.command) { return .move }
             let allOwned = draggedItems.allSatisfy(\.owned)
@@ -70,14 +78,18 @@ final class DragOutCoordinator: NSObject, NSDraggingSource {
     ) {
         MainActor.assumeIsolated {
             let items = draggedItems
+            let wasAirDrop = droppedOnAirDrop
+            droppedOnAirDrop = false
             draggedItems = []
             isDragging = false
 
-            if operation.contains(.move) {
-                // The file now lives elsewhere; forget it without deleting anything.
-                CoveEngine.shared.remove(ids: items.map(\.id), deleteOwned: false)
-            } else if operation != [] && !Self.keepItems {
-                CoveEngine.shared.remove(ids: items.map(\.id))
+            if !wasAirDrop {
+                if operation.contains(.move) {
+                    // The file now lives elsewhere; forget it without deleting anything.
+                    CoveEngine.shared.remove(ids: items.map(\.id), deleteOwned: false)
+                } else if operation != [] && !Self.keepItems {
+                    CoveEngine.shared.remove(ids: items.map(\.id))
+                }
             }
             CoveEngine.shared.pruneMissing()
             NotchWindowManager.shared.dragOutEnded(at: screenPoint)
@@ -149,54 +161,61 @@ struct CardInteractionView: NSViewRepresentable {
         }
 
         override func mouseEntered(with event: NSEvent) {
-            manager.setHovered(card?.id, true)
+            guard let card else { return }
+            manager.setHovered(card.id, true)
         }
 
         override func mouseExited(with event: NSEvent) {
-            manager.setHovered(card?.id, false)
-        }
-
-        /// The hover × sits in the card's top-right corner. The card receives all
-        /// clicks in its area (see NotchPanel.sendEvent), so it handles the × itself.
-        private var removeButtonRect: NSRect {
-            NSRect(x: bounds.maxX - 22, y: isFlipped ? 0 : bounds.maxY - 22, width: 22, height: 22)
-        }
-
-        private func isOnRemoveButton(_ event: NSEvent) -> Bool {
-            guard let card, manager.hoverState(for: card.id).isHovered else { return false }
-            return removeButtonRect.contains(convert(event.locationInWindow, from: nil))
+            guard let card else { return }
+            manager.setHovered(card.id, false)
         }
 
         override func mouseDown(with event: NSEvent) {
             mouseDownEvent = event
             dragStarted = false
-            mouseDownOnRemove = isOnRemoveButton(event)
+            mouseDownOnRemove = isOverRemoveButton(event)
             manager.takeKeyFocus()
         }
 
+        private func isOverRemoveButton(_ event: NSEvent) -> Bool {
+            let point = convert(event.locationInWindow, from: nil)
+            // The 16x16 remove button sits top-right: x in [width - 24, width - 4], y in [height - 24, height - 4].
+            let target = NSRect(x: bounds.maxX - 24, y: bounds.maxY - 24, width: 20, height: 20)
+            return target.contains(point)
+        }
+
         override func mouseDragged(with event: NSEvent) {
-            guard !dragStarted, !mouseDownOnRemove, let down = mouseDownEvent, let card else { return }
-            let a = down.locationInWindow, b = event.locationInWindow
-            guard hypot(b.x - a.x, b.y - a.y) > 3 else { return }
-            dragStarted = true
-            // Dragging a selected card drags the whole selection.
-            selectIfNeeded(card)
-            DragOutCoordinator.shared.beginDrag(items: manager.selectedItems, from: self, event: down)
+            guard let card, !mouseDownOnRemove else { return }
+            if !dragStarted {
+                let down = mouseDownEvent?.locationInWindow ?? event.locationInWindow
+                let current = event.locationInWindow
+                let dx = current.x - down.x, dy = current.y - down.y
+                guard dx * dx + dy * dy >= 16 else { return }
+                dragStarted = true
+                selectIfNeeded(card)
+                DragOutCoordinator.shared.beginDrag(items: manager.selectedItems, from: self, event: event)
+            }
         }
 
         override func mouseUp(with event: NSEvent) {
-            defer { mouseDownEvent = nil; mouseDownOnRemove = false }
-            guard !dragStarted, let card else { return }
-            if mouseDownOnRemove {
-                if removeButtonRect.contains(convert(event.locationInWindow, from: nil)) {
-                    ItemActions.remove(card.items)
+            guard let card else { return }
+            defer { mouseDownEvent = nil; dragStarted = false; mouseDownOnRemove = false }
+            if dragStarted { return }
+
+            if mouseDownOnRemove, isOverRemoveButton(event) {
+                ItemActions.remove(card.items)
+                return
+            }
+
+            if event.clickCount == 2 {
+                if card.isStack {
+                    manager.openStack(card.id)
+                } else {
+                    ItemActions.open(card.items)
                 }
                 return
             }
-            if event.clickCount >= 2 {
-                if card.isStack { manager.openStack(card.id) } else { ItemActions.open(card.items) }
-                return
-            }
+
             let flags = event.modifierFlags
             if flags.contains(.command) {
                 manager.selection.formSymmetricDifference([card.id])
@@ -257,6 +276,48 @@ struct SettingsButton: NSViewRepresentable {
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
         override func mouseDown(with event: NSEvent) {
             (NSApp.delegate as? AppDelegate)?.showSettingsMenu(below: self)
+        }
+    }
+}
+
+// MARK: - AirDrop interaction layer
+
+/// AppKit layer over the AirDrop card for click and hover tracking.
+struct AirDropInteractionView: NSViewRepresentable {
+    func makeNSView(context: Context) -> AirDropNSView { AirDropNSView() }
+    func updateNSView(_ nsView: AirDropNSView, context: Context) {}
+
+    final class AirDropNSView: NSView {
+        private var trackingArea: NSTrackingArea?
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            if let trackingArea { removeTrackingArea(trackingArea) }
+            let area = NSTrackingArea(
+                rect: bounds,
+                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                owner: self
+            )
+            addTrackingArea(area)
+            trackingArea = area
+        }
+
+        override func mouseEntered(with event: NSEvent) {
+            NotchWindowManager.shared.isAirDropCardHovered = true
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            NotchWindowManager.shared.isAirDropCardHovered = false
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            let manager = NotchWindowManager.shared
+            let items = manager.selectedItems.isEmpty ? manager.displayedCards.flatMap(\.items) : manager.selectedItems
+            if !items.isEmpty {
+                ItemActions.airDrop(items)
+            }
         }
     }
 }

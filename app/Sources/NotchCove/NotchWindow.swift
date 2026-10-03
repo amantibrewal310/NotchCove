@@ -12,6 +12,15 @@ func clog(_ msg: String) {
     #endif
 }
 
+// MARK: - Drop target destination
+
+/// Drop target destination on the shelf.
+enum DropTarget: Equatable {
+    case none
+    case stash
+    case airDrop
+}
+
 // MARK: - NotchWindowManager
 
 /// Owns the notch panel and decides when the shelf opens and closes.
@@ -34,6 +43,19 @@ final class NotchWindowManager: NSObject, ObservableObject {
     @Published private(set) var isDropTargeted = false
     @Published private(set) var dropPulse = 0
     @Published var selection: Set<String> = []
+
+    static let showAirDropTargetKey = "ShowAirDropTarget"
+    @Published private(set) var showsAirDropTarget =
+        UserDefaults.standard.object(forKey: showAirDropTargetKey) as? Bool ?? true
+
+    func setShowsAirDropTarget(_ show: Bool) {
+        UserDefaults.standard.set(show, forKey: Self.showAirDropTargetKey)
+        showsAirDropTarget = show
+    }
+
+    @Published private(set) var activeDropTarget: DropTarget = .none
+    @Published var isAirDropCardHovered = false
+
     /// Per-card hover state, so a hover change redraws one card, not the whole shelf.
     final class HoverState: ObservableObject {
         @Published var isHovered = false
@@ -420,6 +442,7 @@ final class NotchWindowManager: NSObject, ObservableObject {
             isExpanded = false
             isReceivingDrag = false
             isDropTargeted = false
+            activeDropTarget = .none
             openStackId = nil
         }
         selection = []
@@ -651,20 +674,42 @@ final class NotchWindowManager: NSObject, ObservableObject {
 
     // MARK: Drop destination callbacks
 
-    /// Returns whether a drop at `point` would land on the shelf.
-    func dropHovered(at point: NSPoint) -> Bool {
-        externalDragInProgress = true
-        showDropZone()
-        let targeted = metrics.shelfRect.contains(point)
-        if targeted != isDropTargeted {
-            withAnimation(.easeOut(duration: 0.15)) { isDropTargeted = targeted }
-            if targeted { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
+    /// Returns which drop target (if any) a drop at `point` would land on.
+    @discardableResult
+    func dropHovered(at point: NSPoint, isInternal: Bool = false) -> DropTarget {
+        if !isInternal {
+            externalDragInProgress = true
+            showDropZone()
         }
-        return targeted
+        let target: DropTarget
+        let isReceiving = isReceivingDrag || !isInternal
+        if showsAirDropTarget && metrics.airDropTargetRect(isReceivingDrag: isReceiving).contains(point) {
+            target = .airDrop
+        } else if !isInternal && metrics.shelfRect.contains(point) {
+            target = .stash
+        } else {
+            target = .none
+        }
+
+        if target != activeDropTarget {
+            withAnimation(.easeOut(duration: 0.15)) {
+                activeDropTarget = target
+                isDropTargeted = target != .none
+            }
+            if target != .none {
+                NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            }
+        }
+        return target
     }
 
     func dropExited() {
-        if isDropTargeted { withAnimation(.easeOut(duration: 0.15)) { isDropTargeted = false } }
+        if activeDropTarget != .none {
+            withAnimation(.easeOut(duration: 0.15)) {
+                activeDropTarget = .none
+                isDropTargeted = false
+            }
+        }
         // Opened at drag start: stay up for the whole drag; closes when it ends.
         if DragOpenMode.current == .dragStart, externalDragInProgress { return }
         if isExpanded, !isSticky, !keepOpenRect.contains(NSEvent.mouseLocation) {
@@ -672,9 +717,10 @@ final class NotchWindowManager: NSObject, ObservableObject {
         }
     }
 
-    func didReceiveDrop(count: Int) {
+    func didReceiveDrop(count: Int, target: DropTarget = .stash) {
         withAnimation(Self.openAnimation) {
             isDropTargeted = false
+            activeDropTarget = .none
             isReceivingDrag = false
             openStackId = nil
             if count > 0 { dropPulse += 1 }
@@ -682,8 +728,10 @@ final class NotchWindowManager: NSObject, ObservableObject {
         externalDragInProgress = false
         if count > 0 {
             NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
-            // Stay open to show what landed; close once the pointer moves away.
-            openReason = .hover
+            if target == .stash {
+                // Stay open to show what landed; close once the pointer moves away.
+                openReason = .hover
+            }
         } else {
             NSSound.beep()
         }
@@ -695,6 +743,7 @@ final class NotchWindowManager: NSObject, ObservableObject {
         withAnimation(Self.closeAnimation) {
             isReceivingDrag = false
             isDropTargeted = false
+            activeDropTarget = .none
         }
         if isExpanded, openReason == .drag, !keepOpenRect.contains(NSEvent.mouseLocation) {
             scheduleCollapse(after: 0.2)
@@ -708,6 +757,9 @@ final class NotchWindowManager: NSObject, ObservableObject {
     }
 
     func dragOutMoved(to point: NSPoint) {
+        if showsAirDropTarget {
+            _ = dropHovered(at: point, isInternal: true)
+        }
         // Get out of the way once the drag leaves, so you can drop onto whatever is underneath.
         if isExpanded, !keepOpenRect.contains(point) {
             scheduleCollapse(after: 0.25)
@@ -717,6 +769,8 @@ final class NotchWindowManager: NSObject, ObservableObject {
     }
 
     func dragOutEnded(at point: NSPoint) {
+        activeDropTarget = .none
+        isDropTargeted = false
         if engine.items.isEmpty || !keepOpenRect.contains(point) {
             collapse()
         }
@@ -808,6 +862,9 @@ final class NotchWindowManager: NSObject, ObservableObject {
                 DropIngest.ingest(.general) { [weak self] count in self?.didReceiveDrop(count: count) }
             case ("o", [.command]): ItemActions.open(selectedItems)
             case ("r", [.command]): ItemActions.reveal(selectedItems)
+            case ("r", [.command, .shift]):
+                let items = selectedItems.isEmpty ? displayedCards.flatMap(\.items) : selectedItems
+                ItemActions.airDrop(items)
             case ("w", [.command]): collapse()
             default: return false
             }

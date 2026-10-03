@@ -76,10 +76,61 @@ enum DropIngest {
         completion(0)
     }
 
+    /// Resolves pasteboard contents into URLs ready for AirDrop sharing.
+    static func ingestForAirDrop(_ pasteboard: NSPasteboard, completion: @escaping @MainActor ([URL]) -> Void) {
+        // 1. Real files and folders.
+        let fileURLs = (pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL]) ?? []
+        if !fileURLs.isEmpty {
+            completion(fileURLs)
+            return
+        }
+
+        // 2. File promises: files that don't exist on disk yet.
+        if let receivers = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver],
+           !receivers.isEmpty {
+            receivePromisesForAirDrop(receivers, completion: completion)
+            return
+        }
+
+        let text = pasteboard.string(forType: .string)
+        let title = pasteboard.string(forType: urlNameType)
+
+        // 3. Raw image data (e.g. images dragged from Chrome).
+        if pasteboard.availableType(from: [.tiff, .png]) != nil,
+           let file = saveImage(from: pasteboard, suggestedName: title) {
+            completion([file])
+            return
+        }
+
+        // 4. A web link.
+        if let link = webLink(in: pasteboard) {
+            completion([link])
+            return
+        }
+
+        // 5. Text that is only file paths.
+        if let text, let urls = filePaths(in: text) {
+            completion(urls)
+            return
+        }
+
+        // 6. Plain text → .txt snippet.
+        if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let file = saveText(text) {
+            completion([file])
+            return
+        }
+
+        completion([])
+    }
+
     /// Every non-empty line is an absolute (or ~) path to something that exists.
     private static func filePaths(in text: String) -> [URL]? {
         let lines = text.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\"'")) }
+            .map { $0.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\"\'")) }
             .filter { !$0.isEmpty }
         guard !lines.isEmpty, lines.count <= 500 else { return nil }
         var urls: [URL] = []
@@ -151,6 +202,52 @@ enum DropIngest {
         DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: finish)
     }
 
+    private static func receivePromisesForAirDrop(
+        _ receivers: [NSFilePromiseReceiver],
+        completion: @escaping @MainActor ([URL]) -> Void
+    ) {
+        let destination = CoveEngine.shared.makeDropFolder()
+        let queue = OperationQueue()
+        queue.qualityOfService = .userInitiated
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var received: [URL] = []
+        var finished = false
+
+        for receiver in receivers {
+            let expected = max(receiver.fileNames.count, 1)
+            for _ in 0..<expected { group.enter() }
+            var remaining = expected
+            receiver.receivePromisedFiles(atDestination: destination, options: [:], operationQueue: queue) { url, error in
+                lock.lock()
+                if error == nil { received.append(url) }
+                else { clog("[Drop] Promise failed: \(error!.localizedDescription)") }
+                let shouldLeave = remaining > 0
+                remaining -= 1
+                lock.unlock()
+                if shouldLeave { group.leave() }
+            }
+        }
+
+        let finish: @Sendable () -> Void = {
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    lock.lock()
+                    guard !finished else { lock.unlock(); return }
+                    finished = true
+                    let urls = received
+                    lock.unlock()
+                    if urls.isEmpty {
+                        try? FileManager.default.removeItem(at: destination)
+                    }
+                    completion(urls)
+                }
+            }
+        }
+        group.notify(queue: .global(), execute: finish)
+        DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: finish)
+    }
+
     // MARK: - Writers
 
     /// Writes PNG bytes as-is; other image types are converted.
@@ -178,16 +275,25 @@ enum DropIngest {
     }
 
     private static func writeToInbox(_ data: Data, name: String) -> URL? {
-        let url = CoveEngine.shared.makeDropFolder().appendingPathComponent(name)
-        return (try? data.write(to: url, options: .atomic)) != nil ? url : nil
+        let inbox = CoveEngine.shared.inboxDirectory
+        let folder = CoveEngine.shared.makeDropFolder()
+        guard folder.path.hasPrefix(inbox.path) else { return nil }
+        let file = folder.appendingPathComponent(name)
+        do {
+            try data.write(to: file, options: .atomic)
+            return file
+        } catch {
+            clog("[Drop] Save failed: \(error.localizedDescription)")
+            return nil
+        }
     }
 
-    /// Makes a string safe for use as a file name; nil when nothing usable is left.
-    private static func sanitize(_ name: String) -> String? {
-        let cleaned = name
-            .replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: ":", with: "-")
-            .trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ".")))
-        return cleaned.isEmpty ? nil : String(cleaned.prefix(80))
+    /// Strips slashes, colons and controls; nil if nothing usable remains.
+    private static func sanitize(_ raw: String) -> String? {
+        let clean = raw
+            .components(separatedBy: CharacterSet(charactersIn: "/:\\\0"))
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return clean.isEmpty ? nil : clean
     }
 }

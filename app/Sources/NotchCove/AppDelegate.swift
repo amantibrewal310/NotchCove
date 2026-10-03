@@ -51,6 +51,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         addToggle("Always Show Virtual Notch", to: menu, isOn: { manager.alwaysShowsVirtualNotch }) {
             manager.setAlwaysShowsVirtualNotch(!manager.alwaysShowsVirtualNotch)
         }
+        addToggle("Show AirDrop Target on Shelf", to: menu, isOn: { manager.showsAirDropTarget }) {
+            manager.setShowsAirDropTarget(!manager.showsAirDropTarget)
+        }
         addToggle("Keep Items After Dragging Out", to: menu, isOn: { DragOutCoordinator.keepItems }) {
             DragOutCoordinator.keepItems.toggle()
         }

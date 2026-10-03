@@ -126,50 +126,72 @@ private struct ShelfContent: View {
 
     var body: some View {
         let cards = manager.displayedCards
+        let showsAirDrop = manager.showsAirDropTarget
+
         VStack(spacing: 0) {
             ShelfHeader(cards: cards)
                 .frame(height: manager.metrics.headerHeight)
 
             ZStack {
-                if cards.isEmpty {
-                    EmptyShelf()
-                        .opacity(manager.isReceivingDrag ? 0 : 1)
-                } else {
-                    ScrollViewReader { proxy in
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            LazyHStack(spacing: 8) {
-                                ForEach(cards) { card in
-                                    CardView(
-                                        card: card,
-                                        scale: manager.metrics.scale,
-                                        isSelected: manager.selection.contains(card.id),
-                                        theme: manager.theme,
-                                        hover: manager.hoverState(for: card.id),
-                                        poof: manager.poofs[card.id]
-                                    )
-                                    .id(card.id)
-                                    .transition(.asymmetric(
-                                        insertion: .scale(scale: 0.6).combined(with: .opacity),
-                                        removal: .opacity
-                                    ))
+                HStack(spacing: 8) {
+                    if cards.isEmpty {
+                        EmptyShelf()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ScrollViewReader { proxy in
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                LazyHStack(spacing: 8) {
+                                    ForEach(cards) { card in
+                                        CardView(
+                                            card: card,
+                                            scale: manager.metrics.scale,
+                                            isSelected: manager.selection.contains(card.id),
+                                            theme: manager.theme,
+                                            hover: manager.hoverState(for: card.id),
+                                            poof: manager.poofs[card.id]
+                                        )
+                                        .id(card.id)
+                                        .transition(.asymmetric(
+                                            insertion: .scale(scale: 0.6).combined(with: .opacity),
+                                            removal: .opacity
+                                        ))
+                                    }
                                 }
+                                .padding(.horizontal, 10)
+                                .padding(.top, 6)
+                                .animation(NotchWindowManager.openAnimation, value: engine.revision)
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.top, 6)
-                            .animation(NotchWindowManager.openAnimation, value: engine.revision)
-                        }
-                        .onChange(of: manager.dropPulse) {
-                            if let first = cards.first { withAnimation { proxy.scrollTo(first.id, anchor: .leading) } }
+                            .onChange(of: manager.dropPulse) {
+                                if let first = cards.first { withAnimation { proxy.scrollTo(first.id, anchor: .leading) } }
+                            }
                         }
                     }
-                    .opacity(manager.isReceivingDrag ? 0.2 : 1)
-                    .blur(radius: manager.isReceivingDrag ? 2 : 0)
+
+                    if showsAirDrop {
+                        Rectangle()
+                            .fill(.white.opacity(0.08))
+                            .frame(width: 1, height: manager.metrics.cardHeight * 0.6)
+                            .padding(.top, 6)
+                        AirDropShelfCard(theme: manager.theme)
+                            .frame(height: manager.metrics.cardHeight)
+                            .padding(.trailing, 10)
+                            .padding(.top, 6)
+                    }
                 }
+                .opacity(manager.isReceivingDrag ? 0.15 : 1)
+                .blur(radius: manager.isReceivingDrag ? 3 : 0)
 
                 if manager.isReceivingDrag {
-                    DropZone(targeted: manager.isDropTargeted, theme: manager.theme)
-                        .padding(.horizontal, 10)
-                        .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                    HStack(spacing: 8) {
+                        DropZone(targeted: manager.activeDropTarget == .stash, theme: manager.theme)
+
+                        if showsAirDrop {
+                            AirDropDropZone(targeted: manager.activeDropTarget == .airDrop, theme: manager.theme)
+                                .frame(width: manager.metrics.airDropDropZoneWidth)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -244,6 +266,17 @@ private struct ShelfHeader: View {
             Spacer(minLength: manager.metrics.hasPhysicalNotch ? manager.metrics.notchWidth + 16 : 16)
 
             if !cards.isEmpty {
+                Button {
+                    let items = manager.selectedItems.isEmpty ? manager.displayedCards.flatMap(\.items) : manager.selectedItems
+                    ItemActions.airDrop(items)
+                } label: {
+                    AirDropMark()
+                        .stroke(style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
+                        .frame(width: 14, height: 14)
+                }
+                .buttonStyle(HeaderButtonStyle())
+                .accessibilityLabel("AirDrop (⇧⌘R)")
+
                 DragAllHandle()
                     .frame(width: 22, height: 22)
                     .overlay(
@@ -344,6 +377,91 @@ private struct DropZone: View {
             )
             .scaleEffect(targeted ? 1.0 : 0.98)
             .animation(.spring(response: 0.25, dampingFraction: 0.7), value: targeted)
+    }
+}
+
+// MARK: - AirDrop drop zone & card
+
+/// Monochrome AirDrop mark: concentric arcs open at the bottom, with a wedge rising to the centre.
+/// Drawn rather than taken from NSSharingService, whose icon is a full-colour app tile.
+struct AirDropMark: Shape {
+    func path(in rect: CGRect) -> Path {
+        let side = min(rect.width, rect.height)
+        let center = CGPoint(x: rect.midX, y: rect.minY + side * 0.5)
+        var path = Path()
+        for radius in [side * 0.2, side * 0.45] {
+            let start = Angle.degrees(120)
+            path.move(to: CGPoint(x: center.x + radius * cos(start.radians), y: center.y + radius * sin(start.radians)))
+            path.addArc(center: center, radius: radius, startAngle: start, endAngle: .degrees(420), clockwise: false)
+        }
+        path.move(to: CGPoint(x: center.x, y: center.y + side * 0.08))
+        path.addLine(to: CGPoint(x: center.x + side * 0.16, y: rect.minY + side * 0.97))
+        path.addLine(to: CGPoint(x: center.x - side * 0.16, y: rect.minY + side * 0.97))
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct AirDropDropZone: View {
+    let targeted: Bool
+    let theme: ShelfTheme
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(theme.dropFill)
+            .opacity(targeted ? 1 : 0.6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(
+                        targeted ? theme.dropStroke : Color.white.opacity(0.3),
+                        style: StrokeStyle(lineWidth: theme.dropLineWidth, dash: theme.dropDashed ? [7, 5] : [])
+                    )
+            )
+            .overlay(
+                VStack(spacing: 8) {
+                    AirDropMark()
+                        .stroke(style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                        .frame(width: 24, height: 24)
+                        .foregroundStyle(targeted ? theme.accent : theme.textSecondary)
+                        .scaleEffect(targeted ? 1.15 : 1)
+                    Text(targeted ? "Release to send" : "AirDrop")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(targeted ? theme.textPrimary : theme.textSecondary)
+            )
+            .scaleEffect(targeted ? 1.0 : 0.98)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: targeted)
+    }
+}
+
+/// Pinned at the trailing edge: drop files on it to send them, or click to send the selection.
+private struct AirDropShelfCard: View {
+    @ObservedObject private var manager = NotchWindowManager.shared
+    let theme: ShelfTheme
+
+    var body: some View {
+        let isTargeted = manager.activeDropTarget == .airDrop
+        let isHovered = manager.isAirDropCardHovered
+        VStack(spacing: 7) {
+            AirDropMark()
+                .stroke(style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                .frame(width: 22, height: 22)
+                .foregroundStyle(isTargeted || isHovered ? theme.accent : theme.textSecondary)
+                .scaleEffect(isTargeted ? 1.15 : 1)
+            Text("AirDrop")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(isTargeted || isHovered ? theme.textPrimary : theme.textSecondary)
+        }
+        .frame(width: manager.metrics.airDropTargetWidth)
+        .frame(maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(isTargeted ? theme.selectionFill : isHovered ? theme.cardHoverFill : .clear)
+        )
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isTargeted)
+        .overlay(AirDropInteractionView())
+        .accessibilityLabel("AirDrop. Drop files to send, or click to send the selection.")
     }
 }
 

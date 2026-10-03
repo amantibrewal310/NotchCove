@@ -10,7 +10,7 @@ Built with a **Rust core engine** for high-performance file management and tempo
 
 ---
 
-## ✨ Features (Phase 1: The Drop Bar Shelf)
+## ✨ Features (Phase 1: The Drop Bar Shelf & AirDrop Integration)
 
 - **Lives in the notch**
   - Sits flush with the MacBook camera notch (`NSScreen.safeAreaInsets`). On external or non-notched displays there's no notch to blend into, so it stays out of sight: a small tab at the top centre of the menu bar while items are waiting, nothing when the shelf is empty. Hover there and the shelf drops down. Prefer a black notch in the menu bar? Turn on *Always Show Virtual Notch*.
@@ -20,13 +20,19 @@ Built with a **Rust core engine** for high-performance file management and tempo
   - Only real drag sessions trigger it. Moving windows or selecting text near the top of the screen does not.
   - Files dropped together stay together as a **stack**. Double-click a stack to open it, or right-click and choose *Split Stack*.
   - Accepts more than files: **promised files** (Mail, Photos, Safari), **images** from browsers, **links** (saved as `.webloc`), and **text** (saved as `.txt`). ⌘V pastes the clipboard onto the shelf.
+- **AirDrop Integration**
+  - **Dedicated AirDrop Target Card**: Pinned directly on the shelf trailing edge. Drop files from Finder directly onto it to AirDrop them immediately without cluttering the shelf.
+  - **Shelf-to-AirDrop**: Drag cards already staged on the shelf directly onto the AirDrop target card to dispatch them via AirDrop. Your staged items are preserved on the shelf.
+  - **Dual Drop Zones**: During active drags, the shelf presents dual drop zones: *Stash* on the left and *AirDrop* on the right with responsive haptic feedback.
+  - **One-Click Sharing & Keyboard Shortcut**: Click the AirDrop shelf card or header button, or press **⇧⌘R** to AirDrop selected (or all) items instantly.
+  - Toggle anytime via *Settings → Show AirDrop Target on Shelf*.
 - **Drag out**
   - Drag a file, a stack, a multi-selection, or everything at once (the stack icon in the header) into Finder, Slack, Mail, or a browser upload.
   - Your files are **copied** by default and never moved by accident. Hold **⌘** while dragging to move them instead. Files NotchCove made itself (snippets, links, received images) can move out on a same-disk drop, so no stray copy stays in the Cove Inbox.
   - The shelf moves out of the way while you drag, so you can drop onto whatever is underneath.
   - Dropped items leave the shelf. Turn on *Keep Items After Dragging Out* in the settings to keep them.
 - **Quick actions** (right-click, or with the keyboard while the shelf is focused)
-  - Quick Look (Space), Open (⏎), Open With, Reveal in Finder (⌘R), Share, AirDrop, Compress to zip, Copy (⌘C), Copy Path, Remove (⌫).
+  - Quick Look (Space), Open (⏎), Open With, Reveal in Finder (⌘R), Share, AirDrop (⇧⌘R), Compress to zip, Copy (⌘C), Copy Path, Remove (⌫).
   - Select with click, ⌘-click, ⇧-click, ⌘A, or ← →. Esc closes.
   - The trash icon in the header clears the whole shelf.
 - **Persistent**: the shelf survives restarts. Entries whose files have been deleted are pruned. Files NotchCove creates itself (snippets, links, archives, received images) live in `~/Library/Application Support/NotchCove/Inbox` and are cleaned up, folders included, when they leave the shelf: removed, cleared, expired, or dragged out. Your own files are never deleted.
@@ -37,7 +43,7 @@ Built with a **Rust core engine** for high-performance file management and tempo
 - **Removing items** plays a small poof over the card, like Dropzone.
 - **Launch at Login** from the settings menu.
 - **Themes**: *Lantern* (warm amber, the default), *Graphite* (system blue) or *Signal* (vivid pink). The shelf stays black in all three.
-- **Settings** (menu bar icon, the gear in the shelf header, or right-click the shelf): *Open Shelf While Dragging*, *Theme*, *Shelf Size* (Compact / Regular / Large), *Auto-Clear Items*, *Screenshots*, *Show Item Count Beside Notch*, *Always Show Virtual Notch*, *Keep Items After Dragging Out*, *Hide Menu Bar Icon*, *Launch at Login*, *Open Cove Inbox Folder*.
+- **Settings** (menu bar icon, the gear in the shelf header, or right-click the shelf): *Open Shelf While Dragging*, *Theme*, *Shelf Size* (Compact / Regular / Large), *Auto-Clear Items*, *Screenshots*, *Show Item Count Beside Notch*, *Always Show Virtual Notch*, *Show AirDrop Target on Shelf*, *Keep Items After Dragging Out*, *Hide Menu Bar Icon*, *Launch at Login*, *Open Cove Inbox Folder*.
   With the icon hidden, open NotchCove again (Spotlight or Finder) to bring it back.
   To preview the external-display look on a MacBook: `defaults write com.notchcove.app ForceVirtualNotch -bool YES`.
 - **Lightweight**: ~0% CPU at idle and while the pointer moves, ~0.5% during mouse drags, ~15–30 MB of memory, and a ~900 KB app bundle.
@@ -64,9 +70,9 @@ NotchCove/
 │   │   ├── NotchGeometry.swift   # Physical & virtual notch geometry
 │   │   ├── FullScreen.swift      # Full-screen detection & desktop-only Spaces for the virtual notch
 │   │   ├── ShelfView.swift       # SwiftUI shelf UI & animations
-│   │   ├── DropIngest.swift      # Files, promises, images, links, text → shelf
-│   │   ├── DragOut.swift         # Drag source, card mouse handling
-│   │   ├── ItemActions.swift     # Quick Look & context-menu actions
+│   │   ├── DropIngest.swift      # Files, promises, images, links, text → shelf & AirDrop
+│   │   ├── DragOut.swift         # Drag source, card mouse handling, internal card drags
+│   │   ├── ItemActions.swift     # Quick Look, context-menu actions, AirDrop service delegate
 │   │   ├── Thumbnails.swift      # Quick Look thumbnails
 │   │   ├── HotKey.swift          # Global ⌃⌥C shortcut (Carbon)
 │   │   └── RustBridge.swift      # Swift wrapper over Rust C-ABI
@@ -123,4 +129,4 @@ Bump `VERSION`, commit and push, then run `./scripts/release.sh`. It tags the ve
 - [x] **Phase 1**: Drop Bar shelf (stacks, drag in/out, promises, quick actions, persistence) & physical/virtual notch geometry
 - [ ] **Phase 2**: Media Player HUD (Spotify / Apple Music now-playing controls with waveform visualizer)
 - [ ] **Phase 3**: System glanceables (Volume & brightness pill HUD replacer, battery charging alert)
-- [ ] **Phase 4**: AirDrop target integration & quick format conversion (PNG -> WebP, Zip stash)
+- [ ] **Phase 4**: ~~AirDrop target integration~~ (done) & quick format conversion (PNG -> WebP, Zip stash)
